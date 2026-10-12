@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { openDatabase } from './database.js';
 import { publicCatalog } from './catalog.js';
+import { exportCsv } from './export.js';
 import { AppError, createRecord, dashboard, deleteRecord, getRecord, listRecords, lookup, updateRecord } from './repository.js';
 
 const publicPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -29,6 +30,14 @@ function headers(type = 'application/json; charset=utf-8') {
 function respond(res, status, body) {
   res.writeHead(status, headers());
   res.end(JSON.stringify(body));
+}
+
+function respondCsv(res, resource, csv) {
+  res.writeHead(200, {
+    ...headers('text/csv; charset=utf-8'),
+    'Content-Disposition': `attachment; filename="wardline-${resource}.csv"`,
+  });
+  res.end(csv);
 }
 
 async function readJson(req) {
@@ -75,6 +84,11 @@ export function createServer({ db = openDatabase() } = {}) {
         if (req.method === 'GET' && path === '/api/catalog') return respond(res, 200, publicCatalog());
         if (req.method === 'GET' && path === '/api/dashboard') return respond(res, 200, dashboard(db));
 
+        const exported = path.match(/^\/api\/export\/([a-z_]+)$/);
+        if (req.method === 'GET' && exported) return respondCsv(res, exported[1], exportCsv(db, exported[1], {
+          search: url.searchParams.get('search') ?? '',
+        }));
+
         const look = path.match(/^\/api\/lookup\/([a-z_]+)$/);
         if (req.method === 'GET' && look) return respond(res, 200, lookup(db, look[1], {
           search: url.searchParams.get('search') ?? '',
@@ -104,7 +118,7 @@ export function createServer({ db = openDatabase() } = {}) {
 
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new AppError(405, 'Method not allowed');
       const staticFile = staticFiles[path];
-      if (!staticFile) throw new AppError(404, 'Not found');
+      if (!Object.hasOwn(staticFiles, path)) throw new AppError(404, 'Not found');
       const bytes = await readFile(join(publicPath, staticFile[0]));
       res.writeHead(200, headers(staticFile[1]));
       if (req.method === 'HEAD') res.end(); else res.end(bytes);

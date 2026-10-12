@@ -11,6 +11,6 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "check": "node --check src/catalog.js && node --check src/database.js && node --check src/repository.js && node --check src/seed.js && node --check src/server.js && node --check public/app.js && node --test"
+    "check": "node --check src/catalog.js && node --check src/database.js && node --check src/export.js && node --check src/repository.js && node --check src/seed.js && node --check src/server.js && node --check public/app.js && node --test"
   }
 }

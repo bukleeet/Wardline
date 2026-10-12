@@ -10,6 +10,7 @@ Wardline is a dependency-free demonstration web application. A Node.js HTTP hand
 | `public/styles.css` | Responsive layout, typography, visual components, focus/reduced-motion styles |
 | `public/app.js` | Routing, asynchronous UI state, CRUD interactions, table pagination, chart rendering |
 | `src/server.js` | Static-file allowlist, content/security headers, body size limit, API routing, HTTP errors |
+| `src/export.js` | Bounded CSV downloads with full form fields, relation labels, and formula escaping |
 | `src/catalog.js` | Whitelisted resources, labels, field types, constraints, relation destinations |
 | `src/repository.js` | Parameterized CRUD/search SQL, transactions, validation, cross-record rules, dashboard queries |
 | `src/database.js` | SQLite schema, foreign keys, indexes, first-run initialization |
@@ -57,6 +58,8 @@ These checks are application-layer rules backed by SQLite constraints. Directly 
 `POST` requires a complete record with all required fields. `PATCH` accepts a nonempty partial object. Both accept JSON only, with bodies limited to 16 KiB. IDs and table/column names are validated against explicit metadata. Errors return `{ error: "description" }`, with a generic message for unhandled server exceptions.
 
 `GET /api/lookup/:resource` returns up to 100 `{ id, label }` options per request. An optional `search` query (maximum 150 characters) matches any substring of the display label without case sensitivity, or a record's exact numeric ID when written as `#123`. Relationship forms fetch matching options on demand and retain the currently selected link even when it falls outside the latest result set.
+
+`GET /api/export/:resource?search=...` returns a UTF-8 CSV download containing all matching records and all form fields, with extra human-readable labels for relationships. The same search validation applies; exports above 5,000 rows are rejected with `422` so the local demo remains responsive. Text cells that could be evaluated as spreadsheet formulas are prefixed with an apostrophe.
 
 The server serves only four explicitly mapped static URLs (`/`, `/styles.css`, `/app.js`, and `/favicon.svg`). CSP, frame restrictions, no-sniff, no-referrer, and no-store headers are supplied. The default binding is `127.0.0.1`; running it on a public interface or with real records is unsupported.
 

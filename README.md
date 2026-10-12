@@ -11,6 +11,7 @@ Wardline reimagines an academic hospital database assignment as a local-first we
 - **Overview:** live admission totals, patient counts, bed occupancy, six-month admissions trend, ward utilization, medication reorder alerts, and recent admissions.
 - **Record management:** create, browse, search, edit, and remove records across 13 resources, including patients, staff, conditions, medicines, admissions, diagnoses, and treatments.
 - **Linked data:** searchable relationship pickers (name or exact `#ID`) and readable relation labels in tables, including historical records outside the initial option list.
+- **Filtered CSV exports:** download all records matching the current section search, with readable linked-record labels and spreadsheet formula escaping (up to 5,000 records).
 - **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, nonoverlapping admission histories, admission/discharge chronology, and treatment-to-diagnosis consistency.
 - **Responsive navigation:** desktop sidebar, compact mobile navigation, keyboard shortcut (`/`) for patient search, accessible dialogs, and empty/error states.
 
@@ -66,6 +67,7 @@ See [Architecture and domain rules](docs/architecture.md) for the resource map, 
 | `GET` | `/api/records/patients?search=amara&page=1&pageSize=10` | Search/paginate patient records |
 | `GET` | `/api/records/patients/1` | Read one record |
 | `GET` | `/api/lookup/wards?search=critical` | Search ward options for forms (100 results maximum) |
+| `GET` | `/api/export/patients?search=amara` | Download matching records as UTF-8 CSV (5,000-row limit) |
 | `POST` | `/api/records/patients` | Create a patient |
 | `PATCH` | `/api/records/patients/1` | Update selected fields |
 | `DELETE` | `/api/records/patients/1` | Remove an unreferenced patient |

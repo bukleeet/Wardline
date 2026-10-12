@@ -75,6 +75,32 @@ function notify(message, isError = false) {
   toastTimer = setTimeout(() => { toastElement.hidden = true; }, 4400);
 }
 
+async function downloadCsv(selectedResource, query, trigger) {
+  trigger.disabled = true;
+  const originalLabel = trigger.textContent;
+  trigger.textContent = 'Preparing CSV…';
+  try {
+    const response = await fetch(`/api/export/${selectedResource}?${new URLSearchParams({ search: query })}`);
+    if (!response.ok) {
+      let message = `Export failed (${response.status})`;
+      try { message = (await response.json()).error || message; } catch { /* Keep HTTP error. */ }
+      throw new Error(message);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `wardline-${selectedResource}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify('CSV export downloaded.');
+  } catch (error) {
+    notify(error instanceof TypeError ? 'Cannot connect to the local server.' : error.message, true);
+  } finally {
+    trigger.disabled = false;
+    trigger.textContent = originalLabel;
+  }
+}
+
 function readableDate(value) {
   if (!value) return '—';
   const date = new Date(`${value}T12:00:00Z`);
@@ -143,7 +169,7 @@ function navigate(destination) {
 function route() {
   clearTimeout(searchTimer);
   const desired = location.hash.replace(/^#\/?/, '').split('/')[0];
-  const nextResource = catalog[desired] ? desired : 'overview';
+  const nextResource = Object.hasOwn(catalog, desired) ? desired : 'overview';
   if (nextResource !== resource) {
     if (recordDialog.open) recordDialog.close();
     if (confirmDialog.open) confirmDialog.close();
@@ -339,7 +365,16 @@ function renderRecords(data) {
     }, 260);
   });
   searchBox.append(input);
-  toolbar.append(searchBox, element('span', 'record-count', `${data.total.toLocaleString('en-US')} records`));
+  const actions = element('div', 'records-toolbar-actions');
+  actions.append(element('span', 'record-count', `${data.total.toLocaleString('en-US')} records`));
+  const exportButton = button('Export CSV', 'button secondary', () => {
+    clearTimeout(searchTimer);
+    search = input.value;
+    page = 1;
+    void downloadCsv(resource, search, exportButton);
+  });
+  actions.append(exportButton);
+  toolbar.append(searchBox, actions);
   panel.append(toolbar);
   panel.append(buildRecordTable(data, definition));
   main.append(panel);
