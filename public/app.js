@@ -17,6 +17,9 @@ let currentRecord = null;
 let pendingDelete = null;
 let loadSequence = 0;
 let formSequence = 0;
+let formReady = false;
+let formSaving = false;
+let deleteSequence = 0;
 let focusSearchOnRender = false;
 let searchTimer;
 let toastTimer;
@@ -145,7 +148,10 @@ function route() {
     if (recordDialog.open) recordDialog.close();
     if (confirmDialog.open) confirmDialog.close();
     pendingDelete = null;
+    deleteSequence += 1;
     formSequence += 1;
+    formReady = false;
+    formSaving = false;
     if (nextResource !== 'patients') focusSearchOnRender = false;
   }
   if (nextResource !== resource) { search = ''; page = 1; }
@@ -406,6 +412,8 @@ async function openForm(id = null) {
   const targetResource = resource;
   const definition = catalog[targetResource];
   const sequence = ++formSequence;
+  formReady = false;
+  formSaving = false;
   currentRecord = id;
   document.querySelector('#form-submit').disabled = true;
   const title = document.querySelector('#dialog-title');
@@ -435,6 +443,12 @@ async function openForm(id = null) {
         const options = field.type === 'relation'
           ? relationships.get(field.key).map((item) => ({ value: item.id, label: item.label }))
           : field.options.map((option) => ({ value: option, label: option === 'F' ? 'Female' : option === 'M' ? 'Male' : option }));
+        // Relation lookups are capped. Keep the current value available when
+        // editing an older record so saving cannot silently erase its link.
+        if (field.type === 'relation' && record[field.key] != null &&
+            !options.some((option) => option.value === record[field.key])) {
+          options.unshift({ value: record[field.key], label: record[`${field.key}_label`] || `Record #${record[field.key]}` });
+        }
         for (const option of options) { const node = element('option', '', option.label); node.value = option.value; control.append(node); }
       } else if (field.type === 'textarea') control = element('textarea');
       else {
@@ -448,6 +462,7 @@ async function openForm(id = null) {
       control.value = record[field.key] ?? '';
       wrap.append(label, control); fieldsElement.append(wrap);
     }
+    formReady = true;
     document.querySelector('#form-submit').disabled = false;
     fieldsElement.querySelector('input,select,textarea')?.focus();
   } catch (error) {
@@ -462,31 +477,41 @@ async function openForm(id = null) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const submit = document.querySelector('#form-submit');
+  if (!recordDialog.open || !formReady || submit.disabled) return;
   const errorElement = document.querySelector('#form-error');
   const targetResource = resource;
   const targetRecord = currentRecord;
   const sequence = formSequence;
   const data = {};
   for (const field of catalog[targetResource].fields) {
-    const value = form.elements.namedItem(field.key).value;
+    const control = form.elements.namedItem(field.key);
+    if (!control) return;
+    const value = control.value;
     data[field.key] = value === '' && !field.required ? null :
       (field.type === 'number' || field.type === 'relation') && value !== '' ? Number(value) : value;
   }
+  formSaving = true;
   submit.disabled = true; errorElement.hidden = true;
   try {
     await api(`records/${targetResource}${targetRecord === null ? '' : `/${targetRecord}`}`, {
       method: targetRecord === null ? 'POST' : 'PATCH', body: JSON.stringify(data),
     });
-    if (sequence !== formSequence) return;
+    if (sequence !== formSequence || !recordDialog.open) return;
     recordDialog.close();
     notify(targetRecord === null ? 'Record created successfully.' : 'Changes saved successfully.');
     await render();
   } catch (error) {
-    if (sequence === formSequence) { errorElement.textContent = error.message; errorElement.hidden = false; }
-  } finally { if (sequence === formSequence) submit.disabled = false; }
+    if (sequence === formSequence && recordDialog.open) { errorElement.textContent = error.message; errorElement.hidden = false; }
+  } finally {
+    if (sequence === formSequence) {
+      formSaving = false;
+      if (recordDialog.open) submit.disabled = false;
+    }
+  }
 });
 
 function openDelete(row) {
+  deleteSequence += 1;
   pendingDelete = { resource, id: row.id };
   document.querySelector('#confirm-description').textContent =
     `Delete ${catalog[resource].singular.toLowerCase()} #${row.id}? Related records may prevent deletion. This action cannot be undone.`;
@@ -494,19 +519,46 @@ function openDelete(row) {
 }
 
 document.querySelector('#confirm-submit').addEventListener('click', async () => {
-  if (!pendingDelete) return;
-  const submit = document.querySelector('#confirm-submit'); submit.disabled = true;
+  const submit = document.querySelector('#confirm-submit');
+  if (!pendingDelete || !confirmDialog.open || submit.disabled) return;
+  const intent = pendingDelete;
+  const sequence = deleteSequence;
+  submit.disabled = true;
   try {
-    await api(`records/${pendingDelete.resource}/${pendingDelete.id}`, { method: 'DELETE' });
+    await api(`records/${intent.resource}/${intent.id}`, { method: 'DELETE' });
+    if (sequence !== deleteSequence || !confirmDialog.open) return;
     confirmDialog.close(); notify('Record deleted.'); await render();
-  } catch (error) { confirmDialog.close(); notify(error.message, true); }
-  finally { submit.disabled = false; pendingDelete = null; }
+  } catch (error) {
+    if (sequence !== deleteSequence || !confirmDialog.open) return;
+    confirmDialog.close(); notify(error.message, true);
+  } finally {
+    if (sequence === deleteSequence) { submit.disabled = false; pendingDelete = null; }
+  }
 });
 
-document.querySelector('#dialog-close').addEventListener('click', () => recordDialog.close());
-document.querySelector('#dialog-cancel').addEventListener('click', () => recordDialog.close());
-document.querySelector('#confirm-cancel').addEventListener('click', () => confirmDialog.close());
-recordDialog.addEventListener('close', () => { formSequence += 1; currentRecord = null; document.querySelector('#form-submit').disabled = false; });
+document.querySelector('#dialog-close').addEventListener('click', () => { if (!formSaving) recordDialog.close(); });
+document.querySelector('#dialog-cancel').addEventListener('click', () => { if (!formSaving) recordDialog.close(); });
+document.querySelector('#confirm-cancel').addEventListener('click', () => {
+  if (!document.querySelector('#confirm-submit').disabled) confirmDialog.close();
+});
+recordDialog.addEventListener('cancel', (event) => { if (formSaving) event.preventDefault(); });
+confirmDialog.addEventListener('cancel', (event) => {
+  if (document.querySelector('#confirm-submit').disabled) event.preventDefault();
+});
+recordDialog.addEventListener('close', () => {
+  if (recordDialog.open) return;
+  formSequence += 1;
+  formReady = false;
+  formSaving = false;
+  currentRecord = null;
+  document.querySelector('#form-submit').disabled = true;
+});
+confirmDialog.addEventListener('close', () => {
+  if (confirmDialog.open) return;
+  deleteSequence += 1;
+  pendingDelete = null;
+  document.querySelector('#confirm-submit').disabled = false;
+});
 document.querySelector('#menu-toggle').addEventListener('click', () => {
   const open = sidebar.classList.toggle('open');
   scrim.hidden = !open;
