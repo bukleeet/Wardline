@@ -1,28 +1,87 @@
-Before you proceed w/ the github commands, ensure the ff: <br>
-- Download git on your device so that you can use git commands on your command prompt / terminal <br>
-- Create a folder for this project in your device <br>
-- Inside that folder / directory, follow these commands:<br>
-- (1) git clone *insert link of repository* --> this will copy and save all files and folders in the main repository inside your device <br>
-- (2) cd main (so that you are in the main branch) <br> 
-- (3) git status (after which, ensure that you are on the main branch, then you are ready to go) <br> <br>
+# Wardline
 
-If u have questions/concerns/suggestions send nalang sa gc <br><br><br>
+**A hospital operations dashboard and relational record management demo.**
 
--- GITHUB COMMANDS -- <br> <br>
-(1) git init --> Makes your local folder a git repository <br>
-(2) git pull origin *branch name* --> this pulls all of the files/folders from the branch you selected into your device<br>
-(3) git checkout -b *branch name* --> creates your own branch <br>
-(4) git switch *branch name* --> switch to the branch you want to commit/push into <br>
-(5) git add . --> Adds all files in your current directory. Replace the . with the specific file (e.g., Nurse.java) to only add that single file <br>
-(6) git commit -m *insert message/description* --> saves the current state of all your files in the directory. You can add a message (short description) of the changes you made in your files<br>
-(7) git push origin *insert branch name* --> Please push first into your own branch. Push means submitting what you have commit (folders/files) in this repository <br><br>
+Wardline reimagines an academic hospital database assignment as a local-first web application. It brings patient flow, ward utilization, medication stock, staffing, and clinical records into a responsive interface backed by SQLite. All demo data is synthetic, so the project can be explored without a hospital database, secrets, or external services.
 
-After doing Steps 1 - 5, Create a pull request here in the github website (in our repository). With that, all members can review the edited 
-files one pushed and decide whether to merge it in the main branch. <br>
+> **Portfolio demonstration only.** All names and records are fictional. This is **not** a medical device, an electronic health record system, or a system for real patient information. It has no user authentication, authorization, encryption-at-rest, or audit trail; do not expose it to the public internet or enter real health data.
 
-(6) git pull origin *branch name* --> this pulls all of the files/folders from the branch you selected into your device<br><br>
+## Explore the app
 
-***The main branch should always be WORKING, NO ERROR/S, and FINAL.*** <br><br>
+- **Overview:** live admission totals, patient counts, bed occupancy, six-month admissions trend, ward utilization, medication reorder alerts, and recent admissions.
+- **Record management:** create, browse, search, edit, and remove records across 13 resources, including patients, staff, conditions, medicines, admissions, diagnoses, and treatments.
+- **Linked data:** relationship pickers for related records and readable relation labels in tables.
+- **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, admission/discharge chronology, and treatment-to-diagnosis consistency.
+- **Responsive navigation:** desktop sidebar, compact mobile navigation, keyboard shortcut (`/`) for patient search, accessible dialogs, and empty/error states.
 
+### Quick start
 
+Requires **Node.js 24 or later**. No `npm install`, API keys, or external services are needed.
 
+```bash
+git clone <your-repository-url>
+cd Hospital-DB
+npm start
+```
+
+Open **http://127.0.0.1:3000**. Wardline creates `data/hospital.sqlite` on first launch and inserts deterministic fake records. Data changes persist across restarts.
+
+Useful commands:
+
+```bash
+npm run dev     # restart server when source changes
+npm test        # run the Node test suite
+npm run check   # syntax checks plus all tests
+```
+
+Configuration: `PORT` sets the HTTP port (default `3000`), and `HOSPITAL_DB_PATH` sets the SQLite file location (default `data/hospital.sqlite`). The default host is `127.0.0.1`; keep the demo bound to a local interface. To reset the demonstration, stop the server and delete `data/hospital.sqlite` and any adjacent `-wal`/`-shm` files. The initial synthetic dataset will be recreated at next launch.
+
+Node currently marks `node:sqlite` experimental, so an experimental feature warning can appear in the console.
+
+## Architecture
+
+```text
+Browser (HTML + CSS + vanilla JavaScript)
+       | same-origin fetch /api/*
+Node HTTP server (src/server.js)
+       | request validation + route dispatch
+Repository/service layer (src/repository.js)
+       | catalog-driven validation + business invariants + parameterized SQL
+SQLite database (src/database.js)
+       | foreign keys, indexes, transactions
+Deterministic demo fixtures (src/seed.js)
+```
+
+No runtime npm dependencies are required. The backend uses built-in Node HTTP and SQLite modules; the frontend uses native browser APIs. Resource definitions and form metadata live in `src/catalog.js` to keep backend validation and client forms aligned.
+
+See [Architecture and domain rules](docs/architecture.md) for the resource map, API contract, design decisions, and limitations.
+
+### API examples
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/catalog` | Resource and field metadata |
+| `GET` | `/api/dashboard` | Aggregate dashboard metrics |
+| `GET` | `/api/records/patients?search=amara&page=1&pageSize=10` | Search/paginate patient records |
+| `GET` | `/api/records/patients/1` | Read one record |
+| `GET` | `/api/lookup/wards` | Ward options for forms |
+| `POST` | `/api/records/patients` | Create a patient |
+| `PATCH` | `/api/records/patients/1` | Update selected fields |
+| `DELETE` | `/api/records/patients/1` | Remove an unreferenced patient |
+
+The API accepts JSON for `POST` and `PATCH` and returns JSON responses. Invalid input produces `400`, unknown resources or IDs produce `404`, and conflicting relations return `409`. The browser and local API use the same HTTP origin; cross-origin requests with conflicting `Origin` or `Sec-Fetch-Site` values are rejected.
+
+## Quality and testing
+
+Tests use Node's built-in test runner and fresh, in-memory SQLite databases. They cover seeded consistency, search and pagination, CRUD, validation, foreign-key behavior, bed capacity, clinical and scheduling rules, dashboard aggregation, and HTTP request handling. HTTP tests invoke the real request listener without opening a socket, which also works in restricted CI environments.
+
+Run `npm run check` before committing. The GitHub Actions workflow repeats these checks on pushes and pull requests. Use conventional commit subjects, such as `feat: add admission dashboard` or `fix: prevent capacity overbooking`.
+
+## Where the original assignment lives
+
+The repository also retains the original Java Swing/MySQL coursework in `DBApplication/` and the top-level SQL scripts as historical reference. Wardline is a separate, modern implementation of the same broad domain and does **not** migrate or depend on the legacy database. The source files in `src/`, `public/`, `test/`, and `docs/` are the active application.
+
+### Scope and next steps
+
+Wardline is built for a local, single-user demo. Production usage would require identity and role controls, encryption, audit logging, migration tooling, observability, accessibility testing in real browsers, and a formal privacy/security review. No such production guarantees are claimed here.
