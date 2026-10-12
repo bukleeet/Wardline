@@ -109,6 +109,40 @@ test('preserves discharge chronology and only reopens admissions when safe', () 
   assert.throws(() => getRecord(db, 'discharges', discharge.id), { status: 404 });
 });
 
+test('prevents overlapping historical patient admissions throughout record changes', () => {
+  const ward = createRecord(db, 'wards', { name: 'History ward', floor: '1', category: 'General', capacity: 3 });
+  const patient = createRecord(db, 'patients', person('History'));
+  const otherPatient = createRecord(db, 'patients', person('OtherHistory'));
+  const admit = (personId, admittedOn) => createRecord(db, 'admissions', {
+    patient_id: personId, ward_id: ward.id, admitted_on: admittedOn, reason: null,
+  });
+  const discharge = (admissionId, dischargedOn) => createRecord(db, 'discharges', {
+    admission_id: admissionId, discharged_on: dischargedOn, disposition: 'Recovered', notes: null,
+  });
+
+  const first = admit(patient.id, '2026-01-01');
+  const firstDischarge = discharge(first.id, '2026-01-05');
+  const second = admit(patient.id, '2026-01-10');
+  const secondDischarge = discharge(second.id, '2026-01-12');
+
+  assert.throws(() => admit(patient.id, '2026-01-04'), /overlap/);
+  assert.throws(() => admit(patient.id, '2026-01-11'), /overlap/);
+  assert.throws(() => updateRecord(db, 'admissions', second.id, { admitted_on: '2026-01-05' }), /overlap/);
+  assert.throws(() => updateRecord(db, 'discharges', firstDischarge.id, { discharged_on: '2026-01-10' }), /overlap/);
+  assert.throws(() => deleteRecord(db, 'discharges', firstDischarge.id), /overlap/);
+  assert.equal(getRecord(db, 'discharges', firstDischarge.id).discharged_on, '2026-01-05');
+  assert.equal(getRecord(db, 'admissions', second.id).admitted_on, '2026-01-10');
+  assert.equal(listRecords(db, 'admissions', { search: 'History' }).total, 2);
+
+  // Nonoverlapping dates and different patients remain valid.
+  const third = admit(patient.id, '2026-01-13');
+  discharge(third.id, '2026-01-14');
+  const sameDatesOtherPatient = admit(otherPatient.id, '2026-01-10');
+  discharge(sameDatesOtherPatient.id, '2026-01-12');
+  assert.equal(getRecord(db, 'discharges', secondDischarge.id).discharged_on, '2026-01-12');
+  assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
+});
+
 test('prevents illogical clinical and scheduling changes', () => {
   assert.throws(() => createRecord(db, 'physician_schedules', { physician_id: 1, weekday: 'Sunday', starts_at: '17:00', ends_at: '08:00' }), /End time/);
   assert.throws(() => createRecord(db, 'nurse_assignments', { nurse_id: 1, patient_id: 1, assigned_on: '2026-04-20', ends_on: '2026-04-15' }), /Assignment end/);

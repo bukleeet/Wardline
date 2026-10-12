@@ -11,7 +11,7 @@ Wardline reimagines an academic hospital database assignment as a local-first we
 - **Overview:** live admission totals, patient counts, bed occupancy, six-month admissions trend, ward utilization, medication reorder alerts, and recent admissions.
 - **Record management:** create, browse, search, edit, and remove records across 13 resources, including patients, staff, conditions, medicines, admissions, diagnoses, and treatments.
 - **Linked data:** relationship pickers for related records and readable relation labels in tables.
-- **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, admission/discharge chronology, and treatment-to-diagnosis consistency.
+- **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, nonoverlapping admission histories, admission/discharge chronology, and treatment-to-diagnosis consistency.
 - **Responsive navigation:** desktop sidebar, compact mobile navigation, keyboard shortcut (`/`) for patient search, accessible dialogs, and empty/error states.
 
 ### Quick start

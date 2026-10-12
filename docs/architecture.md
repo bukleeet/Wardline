@@ -41,7 +41,7 @@ There are 13 editable resources: patients, physicians, nurses, wards, illnesses 
 
 ## Business invariants
 
-1. An active admission is an admission without an associated discharge. A patient may have at most one active admission.
+1. An active admission is an admission without an associated discharge. A patient may have at most one active admission. Historical admission intervals for one patient cannot overlap; because dates have no time component, admission and discharge dates are treated as inclusive calendar days. Creating/editing admissions or discharges, or reopening a discharged admission, preserves this rule.
 2. A ward may not hold more active admissions than its capacity. Reducing ward capacity cannot strand currently admitted patients.
 3. A discharge date cannot precede its admission date. A discharge stays associated with its original admission; deleting a discharge can only reopen it if there is room and the patient is not already admitted elsewhere.
 4. An optional diagnosis attached to a treatment must belong to the same patient. Reassigning a diagnosis's patient is rejected when it would invalidate existing linked treatments.

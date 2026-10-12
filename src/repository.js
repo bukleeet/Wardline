@@ -142,6 +142,18 @@ function validateInput(resource, input, partial = false) {
   return data;
 }
 
+// Date-only admission intervals are inclusive. A patient cannot be in two
+// episodes on the same calendar day, even when both have been discharged.
+function assertNoAdmissionOverlap(db, patientId, admittedOn, dischargedOn, exceptAdmissionId = 0) {
+  const conflict = db.prepare(`SELECT a.id FROM admissions a
+    LEFT JOIN discharges d ON d.admission_id = a.id
+    WHERE a.patient_id = ? AND a.id != ?
+      AND a.admitted_on <= COALESCE(?, '9999-12-31')
+      AND (d.discharged_on IS NULL OR d.discharged_on >= ?)
+    LIMIT 1`).get(patientId, exceptAdmissionId, dischargedOn, admittedOn);
+  if (conflict) throw new AppError(409, 'Patient admission dates overlap another admission');
+}
+
 function guardBusinessRules(db, resource, data, id = null) {
   if (resource === 'admissions') {
     const existing = id ? getRecord(db, resource, id) : {};
@@ -158,6 +170,7 @@ function guardBusinessRules(db, resource, data, id = null) {
       if (capacity !== undefined && occupied >= capacity) throw new AppError(409, 'This ward is at capacity');
     }
     if (discharge && (data.admitted_on ?? existing.admitted_on) > discharge.discharged_on) bad('Admission cannot be after discharge');
+    assertNoAdmissionOverlap(db, patient, data.admitted_on ?? existing.admitted_on, discharge?.discharged_on ?? null, id ?? 0);
   }
   if (resource === 'wards' && id && data.capacity !== undefined) {
     const occupancy = db.prepare(`SELECT COUNT(*) AS count FROM admissions a LEFT JOIN discharges d ON d.admission_id = a.id
@@ -170,8 +183,12 @@ function guardBusinessRules(db, resource, data, id = null) {
     if (id && admissionId !== existing.admission_id) {
       bad('A discharge cannot be reassigned to another admission');
     }
-    const admission = db.prepare('SELECT admitted_on FROM admissions WHERE id = ?').get(admissionId);
-    if (admission && (data.discharged_on ?? existing.discharged_on) < admission.admitted_on) bad('Discharge cannot precede admission');
+    const admission = db.prepare('SELECT patient_id, admitted_on FROM admissions WHERE id = ?').get(admissionId);
+    if (admission) {
+      const dischargedOn = data.discharged_on ?? existing.discharged_on;
+      if (dischargedOn < admission.admitted_on) bad('Discharge cannot precede admission');
+      assertNoAdmissionOverlap(db, admission.patient_id, admission.admitted_on, dischargedOn, admissionId);
+    }
   }
   if (resource === 'diagnoses' && id && data.patient_id !== undefined) {
     const linkedTreatment = db.prepare('SELECT COUNT(*) AS count FROM treatments WHERE diagnosis_id = ? AND patient_id != ?')
@@ -239,7 +256,7 @@ export function deleteRecord(db, resource, id) {
     return transaction(db, () => {
       const row = getRecord(db, resource, id);
       if (resource === 'discharges') {
-        const admission = db.prepare('SELECT patient_id, ward_id FROM admissions WHERE id = ?').get(row.admission_id);
+        const admission = db.prepare('SELECT patient_id, ward_id, admitted_on FROM admissions WHERE id = ?').get(row.admission_id);
         const active = db.prepare(`SELECT COUNT(*) AS count FROM admissions a LEFT JOIN discharges d ON d.admission_id = a.id
           WHERE a.patient_id = ? AND d.id IS NULL`).get(admission.patient_id).count;
         if (active) throw new AppError(409, 'Cannot reopen an admission while the patient is admitted elsewhere');
@@ -247,6 +264,7 @@ export function deleteRecord(db, resource, id) {
           WHERE a.ward_id = ? AND d.id IS NULL`).get(admission.ward_id).count;
         const capacity = db.prepare('SELECT capacity FROM wards WHERE id = ?').get(admission.ward_id).capacity;
         if (occupancy >= capacity) throw new AppError(409, 'Cannot reopen admission: ward is full');
+        assertNoAdmissionOverlap(db, admission.patient_id, admission.admitted_on, null, row.admission_id);
       }
       db.prepare(`DELETE FROM ${resource} WHERE id = ?`).run(id);
       return { deleted: true, id };
