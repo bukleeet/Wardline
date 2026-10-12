@@ -318,8 +318,13 @@ function renderDashboard(data) {
   recent.append(panelHeading('Recent admissions', 'Latest patient arrivals and placement', 'Browse all', () => navigate('admissions')));
   const wrapper = element('div', 'table-wrapper');
   const table = element('table', 'data-table');
+  table.append(element('caption', 'sr-only', 'Recent hospital admissions'));
   const thead = element('thead'); const heading = element('tr');
-  ['PATIENT', 'ADMISSION ID', 'WARD', 'DATE', 'STATUS'].forEach((label) => heading.append(element('th', '', label)));
+  ['PATIENT', 'ADMISSION ID', 'WARD', 'DATE', 'STATUS'].forEach((label) => {
+    const cell = element('th', '', label);
+    cell.scope = 'col';
+    heading.append(cell);
+  });
   thead.append(heading); const tbody = element('tbody');
   for (const admission of data.recent) {
     const row = element('tr'); const patient = element('td', 'table-primary');
@@ -425,12 +430,19 @@ function buildRecordTable(data, definition) {
     container.append(empty);
   } else {
     const wrapper = element('div', 'table-wrapper'); const table = element('table', 'data-table record-table');
+    table.append(element('caption', 'sr-only', `${definition.label} records`));
     const header = element('thead'); const headRow = element('tr');
-    headRow.append(element('th', '', 'ID'));
+    const idHeading = element('th', '', 'ID');
+    idHeading.scope = 'col';
+    headRow.append(idHeading);
     for (const key of definition.columns) {
-      headRow.append(element('th', '', definition.fields.find((field) => field.key === key)?.label || key));
+      const columnHeading = element('th', '', definition.fields.find((field) => field.key === key)?.label || key);
+      columnHeading.scope = 'col';
+      headRow.append(columnHeading);
     }
-    headRow.append(element('th', '', 'ACTIONS')); header.append(headRow);
+    const actionHeading = element('th', '', 'ACTIONS');
+    actionHeading.scope = 'col';
+    headRow.append(actionHeading); header.append(headRow);
     const body = element('tbody');
     for (const row of data.rows) {
       const tr = element('tr'); tr.append(element('td', 'muted-cell', `#${String(row.id).padStart(4, '0')}`));
@@ -452,8 +464,12 @@ function buildRecordTable(data, definition) {
   }
   const footer = element('div', 'panel-footer');
   const first = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
-  footer.append(element('p', '', `Showing ${first}–${Math.min(data.page * data.pageSize, data.total)} of ${data.total} records`));
+  const range = element('p', '', `Showing ${first}–${Math.min(data.page * data.pageSize, data.total)} of ${data.total} records`);
+  range.setAttribute('role', 'status');
+  footer.append(range);
   const pager = element('div', 'pagination');
+  pager.setAttribute('role', 'navigation');
+  pager.setAttribute('aria-label', `${definition.label} pages`);
   const prev = button('', '', () => { page -= 1; void refreshTable({ focusPager: 'previous' }); }, 'chevron');
   prev.firstChild.style.transform = 'rotate(180deg)'; prev.disabled = page === 1; prev.setAttribute('aria-label', 'Previous page');
   const next = button('', '', () => { page += 1; void refreshTable({ focusPager: 'next' }); }, 'chevron');

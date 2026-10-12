@@ -13,14 +13,14 @@ Wardline reimagines an academic hospital database assignment as a local-first we
 - **Linked data:** searchable relationship pickers (name or exact `#ID`) and readable relation labels in tables, including historical records outside the initial option list.
 - **Filtered CSV exports:** download all records matching the current section search, with readable linked-record labels and spreadsheet formula escaping (up to 5,000 records).
 - **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, nonoverlapping admission histories, admission/discharge chronology, and treatment-to-diagnosis consistency.
-- **Responsive navigation:** desktop sidebar, compact mobile navigation, keyboard shortcut (`/`) for patient search, accessible dialogs, and empty/error states.
+- **Responsive navigation:** desktop sidebar, compact mobile navigation, keyboard shortcut (`/`) for patient search, skip-to-content link, labeled data tables, accessible dialogs, and empty/error states.
 
 ### Quick start
 
 Requires **Node.js 24 or later**. No `npm install`, API keys, or external services are needed.
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/bukleeet/Hospital-DB.git
 cd Hospital-DB
 npm start
 ```
