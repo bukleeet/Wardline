@@ -92,8 +92,11 @@ export function openDatabase({ file = process.env.HOSPITAL_DB_PATH || 'data/hosp
   if (file !== ':memory:') mkdirSync(dirname(resolve(file)), { recursive: true });
   const db = new DatabaseSync(file);
   try {
+    // Seed only a new database. Existing demo records can be intentionally
+    // deleted, and an empty patient table must remain empty after a restart.
+    const isNew = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'patients'").get();
     db.exec(schema);
-    if (seed && db.prepare('SELECT COUNT(*) AS total FROM patients').get().total === 0) {
+    if (seed && isNew) {
       transaction(db, () => seedDatabase(db));
     }
     return db;
