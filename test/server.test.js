@@ -1,0 +1,122 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { dirname, resolve } from 'node:path';
+import { Readable, Writable } from 'node:stream';
+import { afterEach, beforeEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { openDatabase } from '../src/database.js';
+import { createServer } from '../src/server.js';
+
+let db;
+let server;
+
+beforeEach(() => {
+  db = openDatabase({ file: ':memory:' });
+  server = createServer({ db });
+});
+
+afterEach(() => {
+  server.closeAllConnections();
+  db.close();
+});
+
+// Drive the actual HTTP request listener without a socket. CI sandboxes may
+// prohibit connections to 127.0.0.1, even when the server can bind locally.
+async function request(method, path, { body, headers = {} } = {}) {
+  const payload = body === undefined ? [] : [typeof body === 'string' ? body : JSON.stringify(body)];
+  const req = Readable.from(payload.map((chunk) => Buffer.from(chunk)));
+  req.url = path;
+  req.method = method;
+  req.headers = { host: '127.0.0.1:3000', ...headers };
+  const chunks = [];
+  const res = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(Buffer.from(chunk));
+      callback();
+    },
+  });
+  res.headersSent = false;
+  res.writeHead = (status, responseHeaders) => {
+    res.statusCode = status;
+    res.responseHeaders = responseHeaders;
+    res.headersSent = true;
+    return res;
+  };
+  const finished = once(res, 'finish');
+  server.emit('request', req, res);
+  await finished;
+  const text = Buffer.concat(chunks).toString('utf8');
+  return { status: res.statusCode, headers: res.responseHeaders, text, json: () => JSON.parse(text) };
+}
+
+const json = { 'content-type': 'application/json' };
+
+test('CLI entrypoint validates the configured port', () => {
+  const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const result = spawnSync(process.execPath, ['src/server.js'], {
+    cwd: projectRoot,
+    env: { ...process.env, PORT: '0' },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /PORT must be between 1 and 65535/);
+});
+
+test('serves secure static assets, HEAD, and health checks', async () => {
+  const index = await request('GET', '/');
+  assert.equal(index.status, 200);
+  assert.match(index.text, /Wardline/);
+  assert.match(index.headers['Content-Security-Policy'], /default-src 'none'/);
+  assert.equal(index.headers['X-Content-Type-Options'], 'nosniff');
+  for (const asset of ['styles.css', 'app.js', 'favicon.svg']) {
+    const response = await request('GET', `/${asset}`);
+    assert.equal(response.status, 200, asset);
+    assert.ok(response.text.length > 100, asset);
+  }
+  const head = await request('HEAD', '/');
+  assert.equal(head.status, 200);
+  assert.equal(head.text, '');
+  assert.deepEqual((await request('GET', '/api/health')).json(), { status: 'ok' });
+  assert.equal((await request('GET', '/private.txt')).status, 404);
+});
+
+test('lists resources, filters records, and returns dashboard data', async () => {
+  const catalog = (await request('GET', '/api/catalog')).json();
+  assert.equal(Object.keys(catalog).length, 13);
+  const data = (await request('GET', '/api/records/patients?search=amara&page=1&pageSize=5')).json();
+  assert.equal(data.total, 1);
+  assert.equal(data.rows[0].first_name, 'Amara');
+  assert.equal((await request('GET', '/api/dashboard')).json().metrics.patients, 32);
+  assert.ok((await request('GET', '/api/lookup/physicians')).json()[0].label);
+  assert.match((await request('GET', '/api/lookup/admissions')).json()[0].label, /^Admission #\d+ · .+ · .+ · \d{4}-\d{2}-\d{2}$/);
+  assert.match((await request('GET', '/api/lookup/diagnoses')).json()[0].label, /^Diagnosis #\d+ · .+ · .+/);
+});
+
+test('supports REST create, update, and delete with JSON content types', async () => {
+  const payload = { first_name: 'REST', last_name: 'Tester', date_of_birth: '1997-03-11', sex: 'M', contact_no: '100200' };
+  const createdResponse = await request('POST', '/api/records/patients', { headers: json, body: payload });
+  assert.equal(createdResponse.status, 201);
+  const created = createdResponse.json();
+  const changed = await request('PATCH', `/api/records/patients/${created.id}`, { headers: json, body: { first_name: 'Edited' } });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.json().first_name, 'Edited');
+  assert.equal((await request('DELETE', `/api/records/patients/${created.id}`)).status, 200);
+  assert.equal((await request('GET', `/api/records/patients/${created.id}`)).status, 404);
+});
+
+test('rejects invalid bodies, pagination, cross-site writes, and unknown routes', async () => {
+  assert.equal((await request('GET', '/api/records/patients?page=-1')).status, 400);
+  assert.equal((await request('GET', '/api/records/patients?pageSize=101')).status, 400);
+  assert.equal((await request('GET', '/api/records/no_such_resource')).status, 404);
+  assert.equal((await request('POST', '/api/records/patients', { headers: { 'content-type': 'text/plain' }, body: '{}' })).status, 415);
+  assert.equal((await request('POST', '/api/records/patients', { headers: json, body: '{invalid' })).status, 400);
+  assert.equal((await request('POST', '/api/records/patients', { headers: json, body: 'x'.repeat(16385) })).status, 413);
+  assert.equal((await request('POST', '/api/records/patients', { headers: { ...json, origin: 'https://evil.invalid' }, body: {} })).status, 403);
+  assert.equal((await request('POST', '/api/records/patients', { headers: { ...json, origin: 'https://127.0.0.1:3000' }, body: {} })).status, 403);
+  assert.equal((await request('POST', '/api/records/patients', { headers: { ...json, 'sec-fetch-site': 'cross-site' }, body: {} })).status, 403);
+  assert.equal((await request('POST', '/api/records/patients', { headers: { ...json, origin: 'http://127.0.0.1:3000' }, body: {} })).status, 400);
+  assert.equal((await request('POST', '/')).status, 405);
+});

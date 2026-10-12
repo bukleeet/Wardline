@@ -1,0 +1,17 @@
+# Local demo data and SQLite journal files
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Tool-generated files
+node_modules/
+coverage/
+.cache/
+.DS_Store
+Thumbs.db
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
