@@ -162,9 +162,10 @@ function route() {
   void render();
 }
 
-function renderError(message) {
+function renderError(message, retry = render) {
   const error = element('div', 'error-panel');
-  error.append(document.createTextNode(message), button('Retry', 'button secondary', () => render()));
+  error.setAttribute('role', 'alert');
+  error.append(document.createTextNode(message), button('Retry', 'button secondary', () => void retry()));
   main.replaceChildren(error);
 }
 
@@ -325,7 +326,9 @@ function renderRecords(data) {
   const toolbar = element('div', 'records-toolbar');
   const searchBox = element('label', 'search-field'); searchBox.setAttribute('aria-label', `Search ${definition.label.toLowerCase()}`);
   searchBox.append(icon('search'));
-  const input = element('input'); input.type = 'search'; input.placeholder = `Search ${definition.label.toLowerCase()}…`;
+  const input = element('input'); input.type = 'search'; input.maxLength = 150;
+  input.placeholder = `Search ${definition.label.toLowerCase()}…`;
+  input.setAttribute('aria-label', `Search ${definition.label.toLowerCase()}`);
   input.value = search;
   input.addEventListener('input', () => {
     const nextSearch = input.value;
@@ -340,7 +343,7 @@ function renderRecords(data) {
   panel.append(toolbar);
   panel.append(buildRecordTable(data, definition));
   main.append(panel);
-  if (resource === 'patients' && focusSearchOnRender) {
+  if (focusSearchOnRender) {
     focusSearchOnRender = false;
     input.focus();
   }
@@ -352,7 +355,9 @@ function buildRecordTable(data, definition) {
     const empty = element('div', 'empty-state'); const pictogram = element('span', 'empty-icon'); pictogram.append(icon(definition.icon));
     empty.append(pictogram, element('h3', '', search ? 'No matches found' : `No ${definition.label.toLowerCase()} yet`),
       element('p', '', search ? 'Try a different name or keyword.' : `Add your first ${definition.singular.toLowerCase()} to get started.`));
-    if (search) empty.append(button('Clear search', 'button secondary', () => { search = ''; page = 1; void render(); }));
+    if (search) empty.append(button('Clear search', 'button secondary', () => {
+      search = ''; page = 1; focusSearchOnRender = true; void render();
+    }));
     else empty.append(button(`Add ${definition.singular.toLowerCase()}`, 'button primary', () => void openForm(), 'plus'));
     container.append(empty);
   } else {
@@ -386,26 +391,48 @@ function buildRecordTable(data, definition) {
   const first = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
   footer.append(element('p', '', `Showing ${first}–${Math.min(data.page * data.pageSize, data.total)} of ${data.total} records`));
   const pager = element('div', 'pagination');
-  const prev = button('', '', () => { page -= 1; void refreshTable(); }, 'chevron');
+  const prev = button('', '', () => { page -= 1; void refreshTable({ focusPager: 'previous' }); }, 'chevron');
   prev.firstChild.style.transform = 'rotate(180deg)'; prev.disabled = page === 1; prev.setAttribute('aria-label', 'Previous page');
-  const next = button('', '', () => { page += 1; void refreshTable(); }, 'chevron');
+  const next = button('', '', () => { page += 1; void refreshTable({ focusPager: 'next' }); }, 'chevron');
   next.disabled = data.page >= data.pages; next.setAttribute('aria-label', 'Next page');
   pager.append(prev, element('span', 'page-number', `${data.page} / ${data.pages}`), next);
   footer.append(pager); container.append(footer);
   return container;
 }
 
-async function refreshTable() {
+async function refreshTable({ focusPager } = {}) {
   const sequence = ++loadSequence;
   const target = main.querySelector('.records-table-container');
+  target?.setAttribute('aria-busy', 'true');
+  target?.querySelectorAll('.pagination button').forEach((item) => { item.disabled = true; });
   try {
     const result = await api(`records/${resource}?${new URLSearchParams({ search, page, pageSize: 10 })}`);
     if (sequence !== loadSequence) return;
-    if (page > result.pages) { page = result.pages; return refreshTable(); }
-    target?.replaceWith(buildRecordTable(result, catalog[resource]));
+    if (page > result.pages) { page = result.pages; return refreshTable({ focusPager }); }
+    const replacement = buildRecordTable(result, catalog[resource]);
+    target?.replaceWith(replacement);
     const count = main.querySelector('.record-count');
     if (count) count.textContent = `${result.total.toLocaleString('en-US')} records`;
-  } catch (error) { if (sequence === loadSequence) notify(error.message, true); }
+    if (focusPager) {
+      const buttons = replacement.querySelectorAll('.pagination button');
+      const preferred = buttons[focusPager === 'next' ? 1 : 0];
+      (preferred?.disabled ? buttons[focusPager === 'next' ? 0 : 1] : preferred)?.focus();
+    }
+  } catch (error) {
+    if (sequence !== loadSequence) return;
+    const replacement = element('div', 'records-table-container');
+    const message = element('div', 'error-panel');
+    message.setAttribute('role', 'alert');
+    const retry = button('Retry loading records', 'button secondary', () => void refreshTable());
+    message.append(document.createTextNode(error.message), retry);
+    replacement.append(message);
+    target?.replaceWith(replacement);
+    const count = main.querySelector('.record-count');
+    if (count) count.textContent = 'Records unavailable';
+    if (focusPager) retry.focus();
+  } finally {
+    if (sequence === loadSequence) target?.removeAttribute('aria-busy');
+  }
 }
 
 async function openForm(id = null) {
@@ -584,7 +611,7 @@ window.addEventListener('hashchange', route);
 
 async function start() {
   try { catalog = await api('catalog'); route(); }
-  catch (error) { renderError(error.message); }
+  catch (error) { renderError(error.message, start); }
 }
 
 void start();
