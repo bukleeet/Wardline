@@ -120,3 +120,25 @@ test('rejects invalid bodies, pagination, cross-site writes, and unknown routes'
   assert.equal((await request('POST', '/api/records/patients', { headers: { ...json, origin: 'http://127.0.0.1:3000' }, body: {} })).status, 400);
   assert.equal((await request('POST', '/')).status, 405);
 });
+
+test('rejects cross-origin reads and protects source files from static requests', async () => {
+  const foreign = { origin: 'https://elsewhere.invalid' };
+  assert.equal((await request('GET', '/api/dashboard', { headers: foreign })).status, 403);
+  assert.equal((await request('GET', '/api/records/patients', {
+    headers: { 'sec-fetch-site': 'cross-site' },
+  })).status, 403);
+  assert.equal((await request('GET', '/api/records/patients', {
+    headers: { origin: 'http://127.0.0.1:3000' },
+  })).status, 200);
+  assert.equal((await request('GET', '/src/server.js')).status, 404);
+  assert.equal((await request('GET', '/.git/config')).status, 404);
+  assert.equal((await request('HEAD', '/src/server.js')).status, 404);
+});
+
+test('rejects oversized search strings and unrepresentable page values', async () => {
+  const hugeSearch = new URLSearchParams({ search: 'a'.repeat(151) });
+  assert.equal((await request('GET', `/api/records/patients?${hugeSearch}`)).status, 400);
+  assert.equal((await request('GET', '/api/records/patients?page=9007199254740992')).status, 400);
+  assert.equal((await request('GET', '/api/records/patients?pageSize=0')).status, 400);
+  assert.equal((await request('GET', '/api/records/patients?page=Infinity')).status, 400);
+});
