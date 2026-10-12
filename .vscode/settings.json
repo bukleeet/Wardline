@@ -1,0 +1,8 @@
+{
+	"java.project.sourcePaths": [
+		"DBApplication/src/view",
+		"DBApplication/src/model",
+		"DBApplication/src",
+		"DBApplication"
+	]
+}
