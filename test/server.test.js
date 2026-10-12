@@ -95,6 +95,19 @@ test('lists resources, filters records, and returns dashboard data', async () =>
   assert.match((await request('GET', '/api/lookup/diagnoses')).json()[0].label, /^Diagnosis #\d+ · .+ · .+/);
 });
 
+test('filters relation lookups and validates their search parameters', async () => {
+  const patient = (await request('GET', '/api/lookup/patients?search=amara')).json();
+  assert.equal(patient.length, 1);
+  assert.match(patient[0].label, /Amara/);
+  assert.deepEqual((await request('GET', `/api/lookup/patients?search=%23${patient[0].id}`)).json(), patient);
+  const admission = (await request('GET', '/api/lookup/admissions')).json()[0];
+  assert.deepEqual((await request('GET', `/api/lookup/admissions?search=%23${admission.id}`)).json(), [admission]);
+  assert.deepEqual((await request('GET', '/api/lookup/wards?search=not-a-ward')).json(), []);
+  assert.equal((await request('GET', `/api/lookup/patients?search=${'x'.repeat(151)}`)).status, 400);
+  assert.equal((await request('GET', '/api/lookup/patients?search=%239999999999999999999')).status, 400);
+  assert.equal((await request('GET', '/api/lookup/unknown')).status, 404);
+});
+
 test('supports REST create, update, and delete with JSON content types', async () => {
   const payload = { first_name: 'REST', last_name: 'Tester', date_of_birth: '1997-03-11', sex: 'M', contact_no: '100200' };
   const createdResponse = await request('POST', '/api/records/patients', { headers: json, body: payload });

@@ -487,7 +487,66 @@ async function openForm(id = null) {
       control.id = `field-${field.key}`; control.name = field.key;
       control.required = field.required;
       control.value = record[field.key] ?? '';
-      wrap.append(label, control); fieldsElement.append(wrap);
+      if (field.type === 'relation') {
+        const searchControl = element('input', 'relation-search');
+        searchControl.type = 'search';
+        searchControl.maxLength = 150;
+        searchControl.autocomplete = 'off';
+        searchControl.placeholder = 'Search by name or #ID';
+        searchControl.setAttribute('aria-label', `Search ${field.label.toLowerCase()} by name or #ID`);
+        const hint = element('small', 'relation-hint');
+        hint.id = `relation-hint-${field.key}`;
+        hint.setAttribute('aria-live', 'polite');
+        searchControl.setAttribute('aria-describedby', hint.id);
+        const initialCount = relationships.get(field.key).length;
+        hint.textContent = initialCount === 100
+          ? 'Showing the first 100. Search to find other records.'
+          : `${initialCount} available ${initialCount === 1 ? 'record' : 'records'}.`;
+        let timer;
+        let requestNumber = 0;
+        searchControl.addEventListener('input', () => {
+          const request = ++requestNumber;
+          const query = searchControl.value.trim();
+          clearTimeout(timer);
+          hint.textContent = 'Searching…';
+          timer = setTimeout(async () => {
+            const isCurrent = () => request === requestNumber && sequence === formSequence &&
+              recordDialog.open && resource === targetResource && currentRecord === id && !formSaving;
+            if (!isCurrent()) return;
+            try {
+              const matches = await api(`lookup/${field.resource}?${new URLSearchParams({ search: query })}`);
+              if (!isCurrent() || searchControl.value.trim() !== query) return;
+              const selected = control.value;
+              const selectedLabel = [...control.options].find((option) => option.value === selected)?.textContent;
+              control.replaceChildren();
+              const placeholder = element('option', '', field.required ? `Select ${field.label.toLowerCase()}` : 'None');
+              placeholder.value = '';
+              if (field.required) placeholder.disabled = true;
+              control.append(placeholder);
+              // Keep the user's current choice available even when it falls
+              // outside the new search results or the 100-record result limit.
+              if (selected && !matches.some((item) => String(item.id) === selected)) {
+                const retained = element('option', '', selectedLabel || `Record #${selected}`);
+                retained.value = selected;
+                control.append(retained);
+              }
+              for (const match of matches) {
+                const option = element('option', '', match.label);
+                option.value = match.id;
+                control.append(option);
+              }
+              control.value = selected;
+              hint.textContent = matches.length === 0 ? 'No matches. Try another name or #ID.' :
+                matches.length === 100 ? 'Showing 100 results. Refine your search for more.' :
+                  `${matches.length} matching ${matches.length === 1 ? 'record' : 'records'}.`;
+            } catch (error) {
+              if (isCurrent()) hint.textContent = `${error.message} Try searching again.`;
+            }
+          }, 220);
+        });
+        wrap.append(label, searchControl, control, hint);
+      } else wrap.append(label, control);
+      fieldsElement.append(wrap);
     }
     formReady = true;
     document.querySelector('#form-submit').disabled = false;

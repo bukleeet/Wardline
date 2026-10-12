@@ -33,6 +33,35 @@ test('supports create, search, read, update, and delete with pagination', () => 
   assert.throws(() => getRecord(db, 'patients', created.id), { status: 404 });
 });
 
+test('searches bounded relation choices by label or exact ID beyond the initial page', () => {
+  const insert = db.prepare(`INSERT INTO patients
+    (first_name, last_name, date_of_birth, sex, contact_no) VALUES (?, 'Example', '1998-05-12', 'F', '100200')`);
+  for (let index = 0; index < 125; index += 1) insert.run(`Aaron${String(index).padStart(3, '0')}`);
+  const older = createRecord(db, 'patients', person('ZuluArchive'));
+  const initial = lookup(db, 'patients');
+  assert.equal(initial.length, 100);
+  assert.ok(!initial.some((entry) => entry.id === older.id));
+  assert.deepEqual(lookup(db, 'patients', { search: `#${older.id}` }).map((row) => ({ ...row })), [
+    { id: older.id, label: 'ZuluArchive Example' },
+  ]);
+  assert.deepEqual(lookup(db, 'patients', { search: 'zuluARCHIVE' }).map((row) => ({ ...row })), [
+    { id: older.id, label: 'ZuluArchive Example' },
+  ]);
+  assert.equal(lookup(db, 'patients', { search: 'Aaron' }).length, 100);
+  assert.deepEqual(lookup(db, 'patients', { search: "' OR 1=1 --" }), []);
+  assert.deepEqual(lookup(db, 'patients', { search: 'NoSuchPatient' }), []);
+
+  for (const relation of ['admissions', 'diagnoses']) {
+    const entry = lookup(db, relation)[0];
+    assert.deepEqual(lookup(db, relation, { search: `#${entry.id}` }), [entry]);
+    assert.ok(lookup(db, relation, { search: entry.label.split(' · ')[1].toLowerCase() })
+      .some((result) => result.id === entry.id));
+  }
+  assert.throws(() => lookup(db, 'patients', { search: 'x'.repeat(151) }), /Search is too long/);
+  assert.throws(() => lookup(db, 'patients', { search: 5 }), /Search is too long/);
+  assert.throws(() => lookup(db, 'patients', { search: '#999999999999999999' }), /Invalid record ID/);
+});
+
 test('rejects invalid or malicious inputs before reaching SQL', () => {
   assert.throws(() => listRecords(db, 'patients; DROP TABLE patients'), { status: 404 });
   assert.throws(() => lookup(db, 'missing_table'), { status: 404 });

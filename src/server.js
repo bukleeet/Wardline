@@ -76,7 +76,9 @@ export function createServer({ db = openDatabase() } = {}) {
         if (req.method === 'GET' && path === '/api/dashboard') return respond(res, 200, dashboard(db));
 
         const look = path.match(/^\/api\/lookup\/([a-z_]+)$/);
-        if (req.method === 'GET' && look) return respond(res, 200, lookup(db, look[1]));
+        if (req.method === 'GET' && look) return respond(res, 200, lookup(db, look[1], {
+          search: url.searchParams.get('search') ?? '',
+        }));
 
         const collection = path.match(/^\/api\/records\/([a-z_]+)$/);
         if (collection) {

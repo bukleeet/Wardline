@@ -56,6 +56,8 @@ These checks are application-layer rules backed by SQLite constraints. Directly 
 
 `POST` requires a complete record with all required fields. `PATCH` accepts a nonempty partial object. Both accept JSON only, with bodies limited to 16 KiB. IDs and table/column names are validated against explicit metadata. Errors return `{ error: "description" }`, with a generic message for unhandled server exceptions.
 
+`GET /api/lookup/:resource` returns up to 100 `{ id, label }` options per request. An optional `search` query (maximum 150 characters) matches any substring of the display label without case sensitivity, or a record's exact numeric ID when written as `#123`. Relationship forms fetch matching options on demand and retain the currently selected link even when it falls outside the latest result set.
+
 The server serves only four explicitly mapped static URLs (`/`, `/styles.css`, `/app.js`, and `/favicon.svg`). CSP, frame restrictions, no-sniff, no-referrer, and no-store headers are supplied. The default binding is `127.0.0.1`; running it on a public interface or with real records is unsupported.
 
 ## Tradeoffs and future work

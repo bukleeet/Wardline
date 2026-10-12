@@ -72,25 +72,37 @@ export function getRecord(db, resource, id) {
   return row;
 }
 
-export function lookup(db, resource) {
+// Return a bounded set of choices for relationship pickers. A name search (or
+// exact #ID) lets callers reach older records without loading entire tables.
+export function lookup(db, resource, { search = '' } = {}) {
   definition(resource);
+  if (typeof search !== 'string' || search.length > 150) bad('Search is too long');
+  const query = search.trim();
+  const idSearch = /^#([1-9]\d*)$/.exec(query);
+  const requestedId = idSearch ? Number(idSearch[1]) : null;
+  if (requestedId !== null && !Number.isSafeInteger(requestedId)) bad('Invalid record ID');
+  const filter = (label, alias) => idSearch
+    ? `WHERE ${alias}.id = ?`
+    : query ? `WHERE instr(lower(${label}), lower(?)) > 0` : '';
+  const params = query ? [idSearch ? requestedId : query] : [];
   if (resource === 'admissions') {
-    return db.prepare(`SELECT a.id,
-      'Admission #' || a.id || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || w.name || ' · ' || a.admitted_on AS label
-      FROM admissions a
-      JOIN patients p ON p.id = a.patient_id
-      JOIN wards w ON w.id = a.ward_id
-      ORDER BY a.id DESC LIMIT 500`).all();
+    const label = "'Admission #' || a.id || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || w.name || ' · ' || a.admitted_on";
+    return db.prepare(`SELECT a.id, ${label} AS label FROM admissions a
+      JOIN patients p ON p.id = a.patient_id JOIN wards w ON w.id = a.ward_id
+      ${filter(label, 'a')}
+      ORDER BY a.id DESC LIMIT 100`).all(...params);
   }
   if (resource === 'diagnoses') {
-    return db.prepare(`SELECT d.id,
-      'Diagnosis #' || d.id || ' · ' || i.name || ' · ' || p.first_name || ' ' || p.last_name AS label
-      FROM diagnoses d
-      JOIN illnesses i ON i.id = d.illness_id
-      JOIN patients p ON p.id = d.patient_id
-      ORDER BY d.id DESC LIMIT 500`).all();
+    const label = "'Diagnosis #' || d.id || ' · ' || i.name || ' · ' || p.first_name || ' ' || p.last_name";
+    return db.prepare(`SELECT d.id, ${label} AS label FROM diagnoses d
+      JOIN illnesses i ON i.id = d.illness_id JOIN patients p ON p.id = d.patient_id
+      ${filter(label, 'd')}
+      ORDER BY d.id DESC LIMIT 100`).all(...params);
   }
-  return db.prepare(`SELECT id, ${naturalName(resource, 't')} AS label FROM ${resource} t ORDER BY label LIMIT 500`).all();
+  const label = naturalName(resource, 't');
+  return db.prepare(`SELECT t.id, ${label} AS label FROM ${resource} t
+    ${filter(label, 't')}
+    ORDER BY label, t.id LIMIT 100`).all(...params);
 }
 
 function validDate(value) {
