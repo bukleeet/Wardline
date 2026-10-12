@@ -32,7 +32,8 @@ Useful commands:
 ```bash
 npm run dev     # restart server when source changes
 npm test        # run the Node test suite
-npm run check   # syntax checks plus all tests
+npm run format:css # format the readable stylesheet
+npm run check   # syntax, CSS formatting, and all tests
 ```
 
 Configuration: `PORT` sets the HTTP port (default `3000`), and `HOSPITAL_DB_PATH` sets the SQLite file location (default `data/hospital.sqlite`). The default host is `127.0.0.1`; keep the demo bound to a local interface. To reset the demonstration, stop the server and delete `data/hospital.sqlite` and any adjacent `-wal`/`-shm` files. The initial synthetic dataset will be recreated at next launch.
