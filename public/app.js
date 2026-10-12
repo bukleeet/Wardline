@@ -3,6 +3,9 @@ const navigation = document.querySelector('#navigation');
 const breadcrumb = document.querySelector('#breadcrumb');
 const sidebar = document.querySelector('#sidebar');
 const scrim = document.querySelector('#mobile-scrim');
+const contentColumn = document.querySelector('.content-column');
+const menuToggle = document.querySelector('#menu-toggle');
+const mobileViewport = window.matchMedia('(max-width: 800px)');
 const recordDialog = document.querySelector('#record-dialog');
 const confirmDialog = document.querySelector('#confirm-dialog');
 const form = document.querySelector('#record-form');
@@ -153,14 +156,34 @@ function setNavigation() {
   }
 }
 
-function closeMobileMenu() {
+function syncMobileMenu() {
+  const mobile = mobileViewport.matches;
+  if (!mobile) sidebar.classList.remove('open');
+  const open = mobile && sidebar.classList.contains('open');
+  sidebar.inert = mobile && !open;
+  contentColumn.inert = open;
+  scrim.hidden = !open;
+  menuToggle.setAttribute('aria-expanded', String(open));
+  if (open) {
+    sidebar.setAttribute('role', 'dialog');
+    sidebar.setAttribute('aria-modal', 'true');
+  } else {
+    sidebar.removeAttribute('role');
+    sidebar.removeAttribute('aria-modal');
+  }
+}
+
+function closeMobileMenu({ restoreFocus = false } = {}) {
+  const wasOpen = sidebar.classList.contains('open');
   sidebar.classList.remove('open');
-  scrim.hidden = true;
-  document.querySelector('#menu-toggle').setAttribute('aria-expanded', 'false');
+  syncMobileMenu();
+  if (wasOpen && restoreFocus) menuToggle.focus();
 }
 
 function navigate(destination) {
+  const fromMobileMenu = mobileViewport.matches && sidebar.classList.contains('open');
   closeMobileMenu();
+  if (fromMobileMenu) main.focus();
   const hash = destination === 'overview' ? '#/' : `#/${destination}`;
   if (location.hash === hash) { route(); return; }
   location.hash = hash;
@@ -267,7 +290,12 @@ function renderDashboard(data) {
     const percent = ward.capacity ? Math.round((ward.occupied / ward.capacity) * 100) : 0;
     fill.style.width = `${Math.min(100, percent)}%`;
     if (percent >= 80) fill.classList.add('warm');
-    track.setAttribute('aria-label', `${ward.name}: ${percent}% occupied`);
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', `${ward.name} occupancy`);
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.min(100, percent)));
+    track.setAttribute('aria-valuetext', `${ward.occupied} of ${ward.capacity} beds occupied`);
     track.append(fill); row.append(heading, track); wardRows.append(row);
   }
   wards.append(wardRows);
@@ -680,12 +708,15 @@ confirmDialog.addEventListener('close', () => {
   pendingDelete = null;
   document.querySelector('#confirm-submit').disabled = false;
 });
-document.querySelector('#menu-toggle').addEventListener('click', () => {
-  const open = sidebar.classList.toggle('open');
-  scrim.hidden = !open;
-  document.querySelector('#menu-toggle').setAttribute('aria-expanded', String(open));
+menuToggle.addEventListener('click', () => {
+  sidebar.classList.add('open');
+  syncMobileMenu();
+  document.querySelector('#menu-close').focus();
 });
-scrim.addEventListener('click', closeMobileMenu);
+document.querySelector('#menu-close').addEventListener('click', () => closeMobileMenu({ restoreFocus: true }));
+scrim.addEventListener('click', () => closeMobileMenu({ restoreFocus: true }));
+mobileViewport.addEventListener('change', syncMobileMenu);
+syncMobileMenu();
 function focusPatientSearch() {
   const existing = resource === 'patients' ? main.querySelector('.search-field input') : null;
   if (existing) { existing.focus(); return; }
@@ -694,7 +725,22 @@ function focusPatientSearch() {
 }
 document.querySelector('#quick-search').addEventListener('click', focusPatientSearch);
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeMobileMenu();
+  if (event.key === 'Escape' && sidebar.classList.contains('open')) {
+    closeMobileMenu({ restoreFocus: true });
+    return;
+  }
+  if (event.key === 'Tab' && sidebar.classList.contains('open')) {
+    const focusable = [...sidebar.querySelectorAll('button:not(:disabled)')];
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && (document.activeElement === first || !sidebar.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !sidebar.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
   if (event.key === '/' && !event.altKey && !event.ctrlKey && !event.metaKey &&
       !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !recordDialog.open && !confirmDialog.open) {
     event.preventDefault();
