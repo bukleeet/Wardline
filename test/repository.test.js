@@ -64,6 +64,51 @@ test('enforces one active admission per patient and ward capacity', () => {
   assert.throws(() => deleteRecord(db, 'discharges', discharge.id), /ward is full/);
 });
 
+test('rejects capacity reductions and ward transfers that would overbook beds', () => {
+  const ward = createRecord(db, 'wards', { name: 'Capacity test', floor: '1', category: 'General', capacity: 2 });
+  const fullWard = createRecord(db, 'wards', { name: 'Full ward', floor: '2', category: 'General', capacity: 1 });
+  const a = createRecord(db, 'patients', person('CapacityA'));
+  const b = createRecord(db, 'patients', person('CapacityB'));
+  const c = createRecord(db, 'patients', person('CapacityC'));
+  const first = createRecord(db, 'admissions', { patient_id: a.id, ward_id: ward.id, admitted_on: '2026-01-01', reason: null });
+  createRecord(db, 'admissions', { patient_id: b.id, ward_id: ward.id, admitted_on: '2026-01-02', reason: null });
+  createRecord(db, 'admissions', { patient_id: c.id, ward_id: fullWard.id, admitted_on: '2026-01-02', reason: null });
+
+  assert.throws(() => updateRecord(db, 'wards', ward.id, { capacity: 1 }), { status: 409 });
+  assert.throws(() => updateRecord(db, 'admissions', first.id, { ward_id: fullWard.id }), { status: 409 });
+  assert.equal(getRecord(db, 'wards', ward.id).capacity, 2);
+  assert.equal(getRecord(db, 'admissions', first.id).ward_id, ward.id);
+  assert.equal(dashboard(db).wards.find((item) => item.id === ward.id).occupied, 2);
+});
+
+test('preserves discharge chronology and only reopens admissions when safe', () => {
+  const ward = createRecord(db, 'wards', { name: 'Reopening test', floor: '1', category: 'General', capacity: 2 });
+  const personRecord = createRecord(db, 'patients', person('Reopening'));
+  const admission = createRecord(db, 'admissions', {
+    patient_id: personRecord.id, ward_id: ward.id, admitted_on: '2026-04-01', reason: null,
+  });
+  const discharge = createRecord(db, 'discharges', {
+    admission_id: admission.id, discharged_on: '2026-04-03', disposition: 'Recovered', notes: null,
+  });
+
+  assert.throws(() => updateRecord(db, 'admissions', admission.id, { admitted_on: '2026-04-04' }), /after discharge/);
+  assert.throws(() => updateRecord(db, 'discharges', discharge.id, { discharged_on: '2026-03-31' }), /precede admission/);
+  assert.equal(getRecord(db, 'admissions', admission.id).admitted_on, '2026-04-01');
+  assert.equal(getRecord(db, 'discharges', discharge.id).discharged_on, '2026-04-03');
+
+  const second = createRecord(db, 'admissions', {
+    patient_id: personRecord.id, ward_id: ward.id, admitted_on: '2026-04-05', reason: null,
+  });
+  assert.throws(() => deleteRecord(db, 'discharges', discharge.id), /admitted elsewhere/);
+  assert.ok(getRecord(db, 'discharges', discharge.id));
+
+  deleteRecord(db, 'admissions', second.id);
+  const activeBefore = dashboard(db).metrics.activeAdmissions;
+  deleteRecord(db, 'discharges', discharge.id);
+  assert.equal(dashboard(db).metrics.activeAdmissions, activeBefore + 1);
+  assert.throws(() => getRecord(db, 'discharges', discharge.id), { status: 404 });
+});
+
 test('prevents illogical clinical and scheduling changes', () => {
   assert.throws(() => createRecord(db, 'physician_schedules', { physician_id: 1, weekday: 'Sunday', starts_at: '17:00', ends_at: '08:00' }), /End time/);
   assert.throws(() => createRecord(db, 'nurse_assignments', { nurse_id: 1, patient_id: 1, assigned_on: '2026-04-20', ends_on: '2026-04-15' }), /Assignment end/);
@@ -84,6 +129,8 @@ test('preserves linked treatment patients and discharge ownership', () => {
     procedure_name: 'Review', notes: null,
   });
   assert.equal(linkedTreatment.diagnosis_id_label, `Diagnosis #${diagnosis.id}`);
+  assert.throws(() => updateRecord(db, 'treatments', linkedTreatment.id, { patient_id: otherPatient.id }), /Diagnosis must belong/);
+  assert.equal(getRecord(db, 'treatments', linkedTreatment.id).patient_id, diagnosis.patient_id);
   assert.throws(() => updateRecord(db, 'diagnoses', diagnosis.id, { patient_id: otherPatient.id }), { status: 409 });
   assert.equal(getRecord(db, 'diagnoses', diagnosis.id).patient_id, diagnosis.patient_id);
 
