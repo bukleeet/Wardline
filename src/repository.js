@@ -11,9 +11,8 @@ export class AppError extends Error {
 const bad = (message) => { throw new AppError(400, message); };
 
 function definition(resource) {
-  const entity = catalog[resource];
-  if (!entity) throw new AppError(404, 'Unknown resource');
-  return entity;
+  if (!Object.hasOwn(catalog, resource)) throw new AppError(404, 'Unknown resource');
+  return catalog[resource];
 }
 
 function naturalName(table, alias) {
@@ -72,6 +71,46 @@ export function getRecord(db, resource, id) {
   return row;
 }
 
+// Some record types lack a natural name column. Their lookup labels include
+// enough context to distinguish one record from another in linked forms.
+const joinedLookups = {
+  admissions: {
+    alias: 'a',
+    from: 'admissions a JOIN patients p ON p.id = a.patient_id JOIN wards w ON w.id = a.ward_id',
+    label: "'Admission #' || a.id || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || w.name || ' · ' || a.admitted_on",
+  },
+  discharges: {
+    alias: 'd',
+    from: 'discharges d JOIN admissions a ON a.id = d.admission_id JOIN patients p ON p.id = a.patient_id',
+    label: "'Discharge #' || d.id || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || d.discharged_on",
+  },
+  diagnoses: {
+    alias: 'd',
+    from: 'diagnoses d JOIN illnesses i ON i.id = d.illness_id JOIN patients p ON p.id = d.patient_id',
+    label: "'Diagnosis #' || d.id || ' · ' || i.name || ' · ' || p.first_name || ' ' || p.last_name",
+  },
+  treatments: {
+    alias: 't',
+    from: 'treatments t JOIN patients p ON p.id = t.patient_id',
+    label: "'Treatment #' || t.id || ' · ' || t.procedure_name || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || t.performed_on",
+  },
+  nurse_assignments: {
+    alias: 'a',
+    from: 'nurse_assignments a JOIN nurses n ON n.id = a.nurse_id JOIN patients p ON p.id = a.patient_id',
+    label: "'Assignment #' || a.id || ' · ' || n.first_name || ' ' || n.last_name || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || a.assigned_on",
+  },
+  physician_schedules: {
+    alias: 's',
+    from: 'physician_schedules s JOIN physicians p ON p.id = s.physician_id',
+    label: "'Schedule #' || s.id || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || s.weekday || ' ' || s.starts_at || '–' || s.ends_at",
+  },
+  nurse_shifts: {
+    alias: 's',
+    from: 'nurse_shifts s JOIN nurses n ON n.id = s.nurse_id',
+    label: "'Shift #' || s.id || ' · ' || n.first_name || ' ' || n.last_name || ' · ' || s.weekday || ' ' || s.starts_at || '–' || s.ends_at",
+  },
+};
+
 // Return a bounded set of choices for relationship pickers. A name search (or
 // exact #ID) lets callers reach older records without loading entire tables.
 export function lookup(db, resource, { search = '' } = {}) {
@@ -85,19 +124,11 @@ export function lookup(db, resource, { search = '' } = {}) {
     ? `WHERE ${alias}.id = ?`
     : query ? `WHERE instr(lower(${label}), lower(?)) > 0` : '';
   const params = query ? [idSearch ? requestedId : query] : [];
-  if (resource === 'admissions') {
-    const label = "'Admission #' || a.id || ' · ' || p.first_name || ' ' || p.last_name || ' · ' || w.name || ' · ' || a.admitted_on";
-    return db.prepare(`SELECT a.id, ${label} AS label FROM admissions a
-      JOIN patients p ON p.id = a.patient_id JOIN wards w ON w.id = a.ward_id
-      ${filter(label, 'a')}
-      ORDER BY a.id DESC LIMIT 100`).all(...params);
-  }
-  if (resource === 'diagnoses') {
-    const label = "'Diagnosis #' || d.id || ' · ' || i.name || ' · ' || p.first_name || ' ' || p.last_name";
-    return db.prepare(`SELECT d.id, ${label} AS label FROM diagnoses d
-      JOIN illnesses i ON i.id = d.illness_id JOIN patients p ON p.id = d.patient_id
-      ${filter(label, 'd')}
-      ORDER BY d.id DESC LIMIT 100`).all(...params);
+  const joined = joinedLookups[resource];
+  if (joined) {
+    return db.prepare(`SELECT ${joined.alias}.id, ${joined.label} AS label FROM ${joined.from}
+      ${filter(joined.label, joined.alias)}
+      ORDER BY ${joined.alias}.id DESC LIMIT 100`).all(...params);
   }
   const label = naturalName(resource, 't');
   return db.prepare(`SELECT t.id, ${label} AS label FROM ${resource} t

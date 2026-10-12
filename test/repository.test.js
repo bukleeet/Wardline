@@ -62,9 +62,33 @@ test('searches bounded relation choices by label or exact ID beyond the initial 
   assert.throws(() => lookup(db, 'patients', { search: '#999999999999999999' }), /Invalid record ID/);
 });
 
+test('provides searchable, identifiable options for every resource', () => {
+  for (const resource of Object.keys(catalog)) {
+    const options = lookup(db, resource);
+    assert.ok(options.length > 0, `${resource} should have seeded lookup options`);
+    const first = options[0];
+    assert.ok(Number.isSafeInteger(first.id), `${resource} option should have a numeric ID`);
+    assert.ok(typeof first.label === 'string' && first.label.length > 0,
+      `${resource} option should have a readable label`);
+    assert.deepEqual(lookup(db, resource, { search: `#${first.id}` }), [first]);
+    assert.ok(lookup(db, resource, { search: first.label }).some((entry) => entry.id === first.id),
+      `${resource} label should be searchable`);
+  }
+  assert.match(lookup(db, 'discharges')[0].label, /^Discharge #\d+ · .+ · \d{4}-\d{2}-\d{2}$/);
+  assert.match(lookup(db, 'treatments')[0].label, /^Treatment #\d+ · .+ · .+ · \d{4}-\d{2}-\d{2}$/);
+  assert.match(lookup(db, 'nurse_assignments')[0].label, /^Assignment #\d+ · .+ · .+ · /);
+  assert.match(lookup(db, 'physician_schedules')[0].label, /^Schedule #\d+ · .+ · (Monday|Tuesday|Wednesday|Thursday|Friday)/);
+  assert.match(lookup(db, 'nurse_shifts')[0].label, /^Shift #\d+ · .+ · (Monday|Tuesday|Wednesday|Thursday|Friday)/);
+});
+
 test('rejects invalid or malicious inputs before reaching SQL', () => {
   assert.throws(() => listRecords(db, 'patients; DROP TABLE patients'), { status: 404 });
   assert.throws(() => lookup(db, 'missing_table'), { status: 404 });
+  for (const inheritedName of ['constructor', '__proto__', 'toString']) {
+    assert.throws(() => lookup(db, inheritedName), { status: 404 });
+    assert.throws(() => listRecords(db, inheritedName), { status: 404 });
+    assert.throws(() => getRecord(db, inheritedName, 1), { status: 404 });
+  }
   assert.throws(() => createRecord(db, 'patients', { ...person(), first_name: '<x>', unauthorized: 1 }), /Unknown field/);
   assert.throws(() => createRecord(db, 'patients', { ...person(), date_of_birth: '2025-02-30' }), /valid date/);
   assert.throws(() => createRecord(db, 'patients', { ...person(), contact_no: '' }), /required/);

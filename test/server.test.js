@@ -106,6 +106,10 @@ test('filters relation lookups and validates their search parameters', async () 
   assert.equal((await request('GET', `/api/lookup/patients?search=${'x'.repeat(151)}`)).status, 400);
   assert.equal((await request('GET', '/api/lookup/patients?search=%239999999999999999999')).status, 400);
   assert.equal((await request('GET', '/api/lookup/unknown')).status, 404);
+  assert.match((await request('GET', '/api/lookup/discharges')).json()[0].label, /^Discharge #/);
+  assert.match((await request('GET', '/api/lookup/physician_schedules')).json()[0].label, /^Schedule #/);
+  assert.equal((await request('GET', '/api/lookup/constructor')).status, 404);
+  assert.equal((await request('GET', '/api/records/__proto__')).status, 404);
 });
 
 test('supports REST create, update, and delete with JSON content types', async () => {
