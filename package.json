@@ -1,0 +1,18 @@
+{
+  "name": "wardline-hospital-operations",
+  "version": "2.0.0",
+  "description": "Local-first hospital operations app showcasing advanced SQLite analytics",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "format:css": "node scripts/format-css.mjs",
+    "test": "node --test",
+    "check": "node --check src/catalog.js && node --check src/database.js && node --check src/migrations.js && node --check src/export.js && node --check src/integrity.js && node --check src/reports.js && node --check src/query-lab.js && node --check src/repository.js && node --check src/seed.js && node --check src/server.js && node --check public/app.js && node --check scripts/format-css.mjs && node --check scripts/benchmark-sql.mjs && node scripts/format-css.mjs --check && node --test",
+    "benchmark:sql": "node scripts/benchmark-sql.mjs"
+  }
+}

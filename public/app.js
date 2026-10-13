@@ -1,0 +1,1103 @@
+const main = document.querySelector('#main');
+const navigation = document.querySelector('#navigation');
+const breadcrumb = document.querySelector('#breadcrumb');
+const sidebar = document.querySelector('#sidebar');
+const scrim = document.querySelector('#mobile-scrim');
+const contentColumn = document.querySelector('.content-column');
+const menuToggle = document.querySelector('#menu-toggle');
+const mobileViewport = window.matchMedia('(max-width: 800px)');
+const recordDialog = document.querySelector('#record-dialog');
+const confirmDialog = document.querySelector('#confirm-dialog');
+const form = document.querySelector('#record-form');
+const fieldsElement = document.querySelector('#form-fields');
+const toastElement = document.querySelector('#toast');
+
+let catalog = {};
+let resource = 'overview';
+let search = '';
+let page = 1;
+let currentRecord = null;
+let pendingDelete = null;
+let loadSequence = 0;
+let formSequence = 0;
+let formReady = false;
+let formSaving = false;
+let deleteSequence = 0;
+let focusSearchOnRender = false;
+let searchTimer;
+let toastTimer;
+function localIsoDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+const reportToday = localIsoDate(new Date());
+const monthAgo = new Date();
+monthAgo.setDate(monthAgo.getDate() - 29);
+const reportMonthAgo = localIsoDate(monthAgo);
+let reportRange = { from: reportMonthAgo, to: reportToday };
+
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+function element(tag, className = '', content) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (content !== undefined && content !== null) node.textContent = String(content);
+  return node;
+}
+
+function button(label, className, handler, iconName) {
+  const node = element('button', className);
+  node.type = 'button';
+  if (iconName) node.append(icon(iconName));
+  if (label) node.append(document.createTextNode(label));
+  if (handler) node.addEventListener('click', handler);
+  return node;
+}
+
+async function api(path, options = {}) {
+  let response;
+  try {
+    response = await fetch(`/api/${path}`, {
+      ...options,
+      headers: options.body ? { 'Content-Type': 'application/json' } : {},
+    });
+  } catch {
+    throw new Error('Cannot connect to the local server. Check that it is running.');
+  }
+  let body;
+  try { body = await response.json(); }
+  catch { throw new Error('The server returned an unreadable response.'); }
+  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+  return body;
+}
+
+function notify(message, isError = false) {
+  clearTimeout(toastTimer);
+  toastElement.textContent = message;
+  toastElement.classList.toggle('error', isError);
+  toastElement.hidden = false;
+  toastTimer = setTimeout(() => { toastElement.hidden = true; }, 4400);
+}
+
+async function downloadCsv(selectedResource, query, trigger) {
+  trigger.disabled = true;
+  const originalLabel = trigger.textContent;
+  trigger.textContent = 'Preparing CSV…';
+  try {
+    const response = await fetch(`/api/export/${selectedResource}?${new URLSearchParams({ search: query })}`);
+    if (!response.ok) {
+      let message = `Export failed (${response.status})`;
+      try { message = (await response.json()).error || message; } catch { /* Keep HTTP error. */ }
+      throw new Error(message);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `wardline-${selectedResource}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify('CSV export downloaded.');
+  } catch (error) {
+    notify(error instanceof TypeError ? 'Cannot connect to the local server.' : error.message, true);
+  } finally {
+    trigger.disabled = false;
+    trigger.textContent = originalLabel;
+  }
+}
+
+function readableDate(value) {
+  if (!value) return '—';
+  const date = new Date(`${value}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+function shortDate(value) {
+  const date = new Date(`${value}T12:00:00Z`);
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function pageHeader(eyebrow, title, description, right = []) {
+  const header = element('div', 'page-header');
+  const copy = element('div');
+  copy.append(element('span', 'eyebrow', eyebrow), element('h1', '', title), element('p', '', description));
+  const actions = element('div', 'page-actions');
+  actions.append(...right);
+  header.append(copy, actions);
+  return header;
+}
+
+function panelHeading(title, subtitle, actionText, action) {
+  const header = element('div', 'panel-header');
+  const copy = element('div');
+  copy.append(element('h2', '', title), element('p', 'panel-subtitle', subtitle));
+  header.append(copy);
+  if (actionText) header.append(button(actionText, 'text-link', action, 'arrow'));
+  return header;
+}
+
+function setNavigation() {
+  const sections = [
+    { label: 'Workspace', items: ['overview', 'reports'] },
+    { label: 'People', items: ['patients', 'physicians', 'nurses'] },
+    { label: 'Clinical records', items: ['diagnoses', 'treatments', 'illnesses', 'medicines'] },
+    { label: 'Hospital operations', items: ['admissions', 'discharges', 'wards', 'nurse_assignments', 'physician_schedules', 'nurse_shifts'] },
+  ];
+  navigation.replaceChildren();
+  for (const section of sections) {
+    const container = element('div', 'nav-section');
+    container.append(element('div', 'nav-label', section.label));
+    for (const key of section.items) {
+      const item = key === 'overview' ? { label: 'Overview', icon: 'grid' }
+        : key === 'reports' ? { label: 'SQL insights', icon: 'clinical' } : catalog[key];
+      if (!item) continue;
+      const link = button(item.label, `nav-link${resource === key ? ' active' : ''}`, () => navigate(key), item.icon);
+      link.setAttribute('aria-current', resource === key ? 'page' : 'false');
+      container.append(link);
+    }
+    navigation.append(container);
+  }
+}
+
+function syncMobileMenu() {
+  const mobile = mobileViewport.matches;
+  if (!mobile) sidebar.classList.remove('open');
+  const open = mobile && sidebar.classList.contains('open');
+  sidebar.inert = mobile && !open;
+  contentColumn.inert = open;
+  scrim.hidden = !open;
+  menuToggle.setAttribute('aria-expanded', String(open));
+  if (open) {
+    sidebar.setAttribute('role', 'dialog');
+    sidebar.setAttribute('aria-modal', 'true');
+  } else {
+    sidebar.removeAttribute('role');
+    sidebar.removeAttribute('aria-modal');
+  }
+}
+
+function closeMobileMenu({ restoreFocus = false } = {}) {
+  const wasOpen = sidebar.classList.contains('open');
+  sidebar.classList.remove('open');
+  syncMobileMenu();
+  if (wasOpen && restoreFocus) menuToggle.focus();
+}
+
+function navigate(destination) {
+  const fromMobileMenu = mobileViewport.matches && sidebar.classList.contains('open');
+  closeMobileMenu();
+  if (fromMobileMenu) main.focus();
+  const hash = destination === 'overview' ? '#/' : `#/${destination}`;
+  if (location.hash === hash) { route(); return; }
+  location.hash = hash;
+}
+
+function route() {
+  clearTimeout(searchTimer);
+  const desired = location.hash.replace(/^#\/?/, '').split('/')[0];
+  const nextResource = desired === 'reports' || Object.hasOwn(catalog, desired) ? desired : 'overview';
+  if (nextResource !== resource) {
+    if (recordDialog.open) recordDialog.close();
+    if (confirmDialog.open) confirmDialog.close();
+    pendingDelete = null;
+    deleteSequence += 1;
+    formSequence += 1;
+    formReady = false;
+    formSaving = false;
+    if (nextResource !== 'patients') focusSearchOnRender = false;
+  }
+  if (nextResource !== resource) { search = ''; page = 1; }
+  resource = nextResource;
+  const pageTitle = resource === 'overview' ? 'Overview' : resource === 'reports' ? 'SQL insights' : catalog[resource].label;
+  breadcrumb.textContent = pageTitle;
+  document.title = `${pageTitle} — Wardline`;
+  setNavigation();
+  void render();
+}
+
+function renderError(message, retry = render) {
+  const error = element('div', 'error-panel');
+  error.setAttribute('role', 'alert');
+  error.append(document.createTextNode(message), button('Retry', 'button secondary', () => void retry()));
+  main.replaceChildren(error);
+}
+
+async function render() {
+  const sequence = ++loadSequence;
+  if (resource === 'overview') {
+    main.replaceChildren(element('div', 'loading', 'Loading dashboard…'));
+    try {
+      const data = await api('dashboard');
+      if (sequence === loadSequence) renderDashboard(data);
+    } catch (error) { if (sequence === loadSequence) renderError(error.message); }
+  } else if (resource === 'reports') {
+    main.replaceChildren(element('div', 'loading', 'Calculating operational insights and checking integrity…'));
+    try {
+      const [data, integrity, lab] = await Promise.all([
+        api(`reports/operations?${new URLSearchParams(reportRange)}`),
+        api('reports/integrity'),
+        api(`reports/query-lab?${new URLSearchParams(reportRange)}`),
+      ]);
+      if (sequence === loadSequence) renderReport(data, integrity, lab);
+    } catch (error) { if (sequence === loadSequence) renderError(error.message); }
+  } else {
+    main.replaceChildren(element('div', 'loading', 'Loading records…'));
+    try {
+      const data = await api(`records/${resource}?${new URLSearchParams({ search, page, pageSize: 10 })}`);
+      if (sequence === loadSequence) renderRecords(data);
+    } catch (error) { if (sequence === loadSequence) renderError(error.message); }
+  }
+}
+
+function renderReport(data, integrity, lab) {
+  const shell = element('div', 'insights-page');
+  const header = pageHeader('DATABASE INTELLIGENCE / 01', 'Operational insights',
+    'A precise view of capacity, patient flow, and clinical workload. Every number comes from live relational queries.');
+  const heroStamp = element('div', 'insight-hero-stamp');
+  heroStamp.append(element('span', '', 'POWERED BY'), element('strong', '', 'SQLite'), element('small', '', 'CTEs  /  WINDOW FUNCTIONS'));
+  header.append(heroStamp);
+  shell.append(header);
+  const dates = element('form', 'report-filters');
+  const filterLabel = element('div', 'report-filter-heading');
+  filterLabel.append(element('span', 'eyebrow', 'QUERY WINDOW'), element('strong', '', 'Select date range'),
+    element('small', '', 'Inclusive dates · up to 366 days'));
+  dates.append(filterLabel);
+  const dateInputs = {};
+  for (const field of ['from', 'to']) {
+    const label = element('label', 'report-date-field');
+    label.append(element('span', '', field === 'from' ? 'From' : 'Through'));
+    const input = element('input');
+    input.type = 'date'; input.name = field; input.required = true;
+    input.value = reportRange[field];
+    input.addEventListener('input', () => { dateInputs.to.setCustomValidity(''); });
+    dateInputs[field] = input;
+    label.append(input); dates.append(label);
+  }
+  const submit = element('button', 'button primary', 'Run report');
+  submit.type = 'submit'; dates.append(submit);
+  dates.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const next = Object.fromEntries(new FormData(dates));
+    const days = Math.round((Date.parse(`${next.to}T00:00:00Z`) - Date.parse(`${next.from}T00:00:00Z`)) / 86400000) + 1;
+    dateInputs.to.setCustomValidity(next.from > next.to ? 'Through date must be on or after From date.'
+      : days > 366 ? 'Choose a range of 366 days or fewer.' : '');
+    if (!dates.reportValidity()) return;
+    reportRange = next;
+    void render();
+  });
+  shell.append(dates);
+  const queryNotes = element('div', 'report-query-notes');
+  for (const [number, title, detail] of [
+    ['01', 'Interval arithmetic', 'Clipped, inclusive bed-days'],
+    ['02', 'Analytic windows', 'Census totals and next-stay timelines'],
+    ['03', 'Independent aggregates', 'No diagnosis × treatment fanout'],
+    ['04', 'Event-stream census', 'Daily peaks and capacity pressure'],
+  ]) {
+    const note = element('div', 'report-query-note');
+    note.append(element('span', '', number), element('strong', '', title), element('small', '', detail));
+    queryNotes.append(note);
+  }
+  shell.append(queryNotes);
+  const cards = element('div', 'insight-metrics');
+  const pressuredWards = data.wards.filter((ward) => ward.days_at_capacity > 0).length;
+  const metrics = [
+    ['Admissions', data.summary.admissions, 'Started within window'],
+    ['Discharges', data.summary.discharges, 'Completed within window'],
+    ['Bed utilization', data.summary.availableBedDays ? `${(100 * data.summary.occupiedBedDays / data.summary.availableBedDays).toFixed(1)}%` : '—', 'Occupied / available bed-days'],
+    ['Average stay', data.summary.avgStayDays === null ? '—' : `${data.summary.avgStayDays} days`, 'Discharged patients'],
+    ['Capacity pressure', `${pressuredWards} / ${data.wards.length}`, 'Wards reaching capacity during the range'],
+    ['30-day returns', `${data.summary.returnsWithin30Days} / ${data.summary.discharges}`, 'Discharged stays with a recorded return'],
+  ];
+  for (const [label, value, detail] of metrics) {
+    const card = element('article', 'insight-metric');
+    card.append(element('span', 'eyebrow', label), element('strong', '', value), element('small', '', detail));
+    cards.append(card);
+  }
+  shell.append(cards);
+  shell.append(renderQueryLab(lab));
+  shell.append(renderIntegrity(integrity));
+  const panels = element('div', 'insight-panels');
+  const wardPanel = element('section', 'insight-panel');
+  wardPanel.append(panelHeading('Capacity by ward', 'Utilization, daily peak census, and days at the limit'));
+  for (const ward of data.wards) {
+    const row = element('div', 'ward-insight');
+    const header = element('div', 'ward-insight-label');
+    header.append(element('strong', '', ward.name), element('span', '', `${ward.utilization_pct}% · ${ward.occupied_bed_days}/${ward.available_bed_days} bed-days`));
+    const track = element('div', 'insight-track');
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', `${ward.name} bed utilization`);
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.min(100, Math.max(0, ward.utilization_pct))));
+    track.setAttribute('aria-valuetext', `${ward.utilization_pct}% utilization`);
+    const bar = element('div', 'insight-bar');
+    bar.style.width = `${Math.min(100, Math.max(0, ward.utilization_pct))}%`;
+    const details = element('div', 'ward-insight-details');
+    details.append(element('span', 'ward-peak', ward.peak_census
+      ? `Peak ${ward.peak_census} / ${ward.capacity} beds · ${shortDate(ward.peak_day)}`
+      : 'No occupied beds in this range'));
+    const pressure = ward.days_over_capacity > 0
+      ? `${ward.days_over_capacity} over limit · ${ward.days_at_capacity} at/above limit`
+      : ward.days_at_capacity > 0
+        ? `${ward.days_at_capacity} ${ward.days_at_capacity === 1 ? 'day' : 'days'} at capacity`
+        : 'Below capacity throughout';
+    const pressureState = ward.days_over_capacity > 0 ? 'over'
+      : ward.days_at_capacity > 0 ? 'at' : 'clear';
+    details.append(element('span', `ward-pressure ${pressureState}`, pressure));
+    track.append(bar); row.append(header, track, details); wardPanel.append(row);
+  }
+  const workloadPanel = element('section', 'insight-panel');
+  workloadPanel.append(panelHeading('Physician workload', 'Separate aggregates prevent duplicate counts'));
+  const tableWrap = element('div', 'insight-table-wrap');
+  const table = element('table', 'insight-table');
+  table.append(element('caption', 'sr-only', 'Physician diagnoses, treatments and unique treated patients, ranked by activity'));
+  const thead = element('thead');
+  const headings = element('tr');
+  for (const heading of ['Rank', 'Physician', 'Diagnoses', 'Treatments', 'Patients']) {
+    const th = element('th', '', heading); th.scope = 'col'; headings.append(th);
+  }
+  thead.append(headings); table.append(thead);
+  const tbody = element('tbody');
+  for (const physician of data.physicians) {
+    const tr = element('tr');
+    tr.append(element('td', 'insight-rank', `#${String(physician.workload_rank).padStart(2, '0')}`));
+    const name = element('th', '', physician.name); name.scope = 'row'; tr.append(name);
+    for (const value of [physician.diagnoses, physician.treatments, physician.treated_patients]) tr.append(element('td', '', value));
+    tbody.append(tr);
+  }
+  table.append(tbody); tableWrap.append(table); workloadPanel.append(tableWrap);
+  panels.append(wardPanel, workloadPanel); shell.append(panels);
+  const returnsPanel = element('section', 'insight-panel');
+  returnsPanel.append(panelHeading('Observed returns within 30 days',
+    'Discharges during the selected dates · next admission may fall outside the range'));
+  const returnsWrap = element('div', 'insight-table-wrap');
+  const returnsTable = element('table', 'insight-table');
+  returnsTable.append(element('caption', 'sr-only',
+    'Discharged stays and recorded subsequent admissions within 1 to 30 days, grouped by discharge ward'));
+  const returnsHead = element('tr');
+  for (const heading of ['Discharge ward', 'Discharged stays', 'Returned in 30 days', 'Observed share']) {
+    const th = element('th', '', heading); th.scope = 'col'; returnsHead.append(th);
+  }
+  const returnsThead = element('thead'); returnsThead.append(returnsHead); returnsTable.append(returnsThead);
+  const returnsBody = element('tbody');
+  for (const ward of data.returns) {
+    const tr = element('tr');
+    const name = element('th', '', ward.name); name.scope = 'row'; tr.append(name);
+    tr.append(element('td', '', ward.discharged_stays));
+    tr.append(element('td', '', ward.returns_within_30_days));
+    tr.append(element('td', 'insight-return-share', ward.return_pct === null ? '—' : `${ward.return_pct}%`));
+    returnsBody.append(tr);
+  }
+  returnsTable.append(returnsBody); returnsWrap.append(returnsTable); returnsPanel.append(returnsWrap);
+  returnsPanel.append(element('p', 'insight-method-note',
+    'A return is the next recorded admission for the same patient, 1–30 calendar days after discharge. ' +
+    'Counts reflect the available records; missing future visits and incomplete follow-up can understate returns. ' +
+    'These synthetic results are not a clinical quality measure.'));
+  shell.append(returnsPanel);
+  const flow = element('section', 'insight-panel');
+  flow.append(panelHeading('Daily patient flow', `${data.days} days · date-complete series with running net flow`));
+  const flowTableWrap = element('div', 'insight-table-wrap');
+  const flowTable = element('table', 'insight-table');
+  flowTable.append(element('caption', 'sr-only', 'Daily admissions, discharges, occupied census and cumulative net patient flow'));
+  const flowHead = element('tr');
+  for (const heading of ['Date', 'Admissions', 'Discharges', 'Census', 'Net flow']) {
+    const th = element('th', '', heading); th.scope = 'col'; flowHead.append(th);
+  }
+  const flowThead = element('thead'); flowThead.append(flowHead); flowTable.append(flowThead);
+  const flowBody = element('tbody');
+  for (const day of data.daily) {
+    const tr = element('tr');
+    const date = element('th', '', readableDate(day.day)); date.scope = 'row'; tr.append(date);
+    for (const value of [day.admissions, day.discharges, day.census, day.net_flow]) tr.append(element('td', '', value));
+    flowBody.append(tr);
+  }
+  flowTable.append(flowBody); flowTableWrap.append(flowTable); flow.append(flowTableWrap); shell.append(flow);
+  shell.append(element('p', 'insight-note', 'Synthetic demonstration data. Occupancy counts admission and discharge dates. Capacity pressure compares each historical day against the ward’s current capacity. Net flow is cumulative change within the selected range.'));
+  main.replaceChildren(shell);
+}
+
+function renderQueryLab(lab) {
+  const section = element('section', 'query-lab');
+  section.setAttribute('aria-labelledby', 'query-lab-title');
+  const intro = element('div', 'query-lab-intro');
+  const title = element('h2', '', 'From SQL to evidence.');
+  title.id = 'query-lab-title';
+  intro.append(element('span', 'eyebrow', 'UNDER THE HOOD / 02'), title,
+    element('p', '', 'Explore the SQL, its live SQLite access plan, and five result rows from the same bound inputs. Two statements power the reports on this page.'));
+  const heading = element('div', 'query-lab-heading');
+  heading.append(intro, element('span', 'query-lab-badge', 'SQL / PLAN / RESULTS · READ ONLY'));
+  section.append(heading);
+  const list = element('div', 'query-lab-list');
+  for (const [index, example] of lab.examples.entries()) {
+    const item = element('details', 'query-lab-item');
+    if (index === 0) item.open = true;
+    const summary = element('summary', 'query-lab-summary');
+    const identity = element('span', 'query-lab-identity');
+    identity.append(element('span', 'query-lab-index', String(index + 1).padStart(2, '0')),
+      element('span', 'query-lab-title', example.title));
+    summary.append(identity, element('span', 'query-lab-technique', example.technique));
+    item.append(summary);
+    const body = element('div', 'query-lab-body');
+    body.append(element('p', 'query-lab-description', example.explanation),
+      element('p', 'query-lab-context', example.context));
+    const columns = element('div', 'query-lab-columns');
+    const source = element('div', 'query-lab-code');
+    const code = element('pre');
+    code.append(element('code', '', example.sql));
+    source.append(element('div', 'query-lab-caption', 'PARAMETERIZED SQL'), code);
+    const output = element('div', 'query-lab-plan');
+    output.append(element('div', 'query-lab-caption', 'SQLITE PLANNER OUTPUT'));
+    const bindings = element('div', 'query-lab-bindings');
+    for (const [key, value] of Object.entries(example.bindings)) {
+      bindings.append(element('span', '', `:${key} = ${value}`));
+    }
+    output.append(bindings);
+    const steps = element('ol', 'query-lab-steps');
+    for (const node of example.plan) steps.append(element('li', '', node.detail));
+    output.append(steps);
+    columns.append(source, output);
+    body.append(columns);
+    const preview = element('section', 'query-lab-preview');
+    preview.setAttribute('aria-label', `Query result preview: ${example.title}`);
+    const previewHeading = element('div', 'query-lab-preview-heading');
+    previewHeading.append(element('span', 'query-lab-preview-label', '03 / EXECUTED RESULT'),
+      element('span', 'query-lab-preview-count', `First ${example.preview.limit} rows · ${example.preview.rows.length} shown`));
+    preview.append(previewHeading);
+    if (example.preview.rows.length) {
+      const scroll = element('div', 'query-lab-result-scroll');
+      const table = element('table', 'query-lab-result-table');
+      table.append(element('caption', 'sr-only', `Sample output for ${example.title}, at most ${example.preview.limit} rows`));
+      const head = element('tr');
+      for (const name of example.preview.columns) {
+        const th = element('th', '', name.replaceAll('_', ' ')); th.scope = 'col'; head.append(th);
+      }
+      const thead = element('thead'); thead.append(head); table.append(thead);
+      const tbody = element('tbody');
+      for (const row of example.preview.rows) {
+        const tr = element('tr');
+        for (const name of example.preview.columns) {
+          const value = row[name];
+          tr.append(element('td', value === null ? 'query-lab-null' : '', value === null ? 'NULL' : String(value)));
+        }
+        tbody.append(tr);
+      }
+      table.append(tbody); scroll.append(table); preview.append(scroll);
+    } else {
+      preview.append(element('p', 'query-lab-preview-empty', 'No matching rows for these bound inputs.'));
+    }
+    body.append(preview);
+    item.append(body);
+    list.append(item);
+  }
+  section.append(list, element('p', 'query-lab-footnote',
+    'Fixed, read-only SQL is executed only with server-defined bindings. Previews are limited to five rows inside SQLite. Plans show estimated access paths, not timing benchmarks; choices can change with schema and data.'));
+  return section;
+}
+
+function renderIntegrity(integrity) {
+  const audit = element('section', 'integrity-section');
+  audit.setAttribute('aria-labelledby', 'integrity-heading');
+  const heading = element('div', 'integrity-heading');
+  const introduction = element('div', 'integrity-intro');
+  introduction.append(element('span', 'eyebrow', 'DATABASE HEALTH / 03'));
+  const title = element('h2', '', 'Integrity, by design.');
+  title.id = 'integrity-heading';
+  introduction.append(title, element('p', '',
+    'Seven live SQL checks inspect the entire relational database, including changes made outside the app. ' +
+    'This audit is independent of the date range above.'));
+  const status = element('div', `integrity-score${integrity.total ? ' alert' : ''}`);
+  status.setAttribute('role', 'status');
+  status.append(element('span', 'integrity-score-label', integrity.total ? 'REQUIRES REVIEW' : 'ALL CHECKS CLEAR'),
+    element('strong', '', integrity.total),
+    element('small', '', `${integrity.total === 1 ? 'finding' : 'findings'} across ${integrity.checked} rules`));
+  heading.append(introduction, status);
+  audit.append(heading);
+
+  const checks = element('div', 'integrity-grid');
+  integrity.checks.forEach((check, index) => {
+    const item = element('article', `integrity-rule${check.count ? ' needs-review' : ''}`);
+    const top = element('div', 'integrity-rule-top');
+    top.append(element('span', 'integrity-rule-index', String(index + 1).padStart(2, '0')),
+      element('span', 'integrity-rule-status', check.count ? `${check.count} ${check.count === 1 ? 'issue' : 'issues'}` : 'Passed'));
+    item.append(top, element('h3', '', check.label));
+    if (check.count) {
+      const details = element('details', 'integrity-examples');
+      details.append(element('summary', '', `Inspect ${check.examples.length} ${check.examples.length === 1 ? 'example' : 'examples'}`));
+      const examples = element('ul');
+      for (const example of check.examples) examples.append(element('li', '', example.detail));
+      details.append(examples);
+      item.append(details);
+    } else {
+      item.append(element('p', 'integrity-rule-empty', 'No violations found'));
+    }
+    checks.append(item);
+  });
+  audit.append(checks, element('p', 'integrity-footnote',
+    'Read-only audit · SQL window functions and conditional joins · Up to three sample records per rule. ' +
+    'Checks cover seven defined domain invariants and are not an exhaustive validation of the database.'));
+  return audit;
+}
+
+function renderDashboard(data) {
+  main.replaceChildren();
+  const today = element('span', 'date-chip');
+  today.append(icon('calendar'), document.createTextNode(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })));
+  const hero = element('section', 'overview-hero');
+  hero.setAttribute('aria-labelledby', 'overview-title');
+  const copy = element('div', 'overview-hero-copy');
+  copy.append(element('span', 'overview-kicker', 'WARDLINE  /  OPERATIONS DESK'));
+  const title = element('h1', '', 'A clearer view of care.');
+  title.id = 'overview-title';
+  copy.append(title, element('p', '',
+    'From patient flow to capacity pressure, one connected workspace puts the hospital’s moving parts into focus.'));
+  const actions = element('div', 'overview-hero-actions');
+  actions.append(button('Explore SQL insights', 'button overview-primary-action', () => navigate('reports'), 'arrow'),
+    button('Browse patient records', 'button overview-secondary-action', () => navigate('patients')));
+  copy.append(actions);
+  const visual = element('div', 'overview-hero-proof');
+  visual.append(element('div', 'overview-proof-label', 'BEHIND THE DASHBOARD'));
+  const number = element('div', 'overview-proof-number');
+  number.append(element('strong', '', Object.keys(catalog).length.toString().padStart(2, '0')),
+    element('span', '', 'connected\nrecord types'));
+  visual.append(number);
+  const details = element('div', 'overview-proof-details');
+  details.append(element('span', '', 'SQLite · relational data'), element('span', '', 'Live SQL reporting'));
+  visual.append(details, today);
+  hero.append(copy, visual);
+  main.append(hero);
+
+  const banner = element('div', 'demo-banner');
+  banner.append(icon('check'));
+  const bannerCopy = element('span');
+  bannerCopy.append(element('strong', '', 'Demonstration workspace · '), document.createTextNode('All people, activity, and metrics shown here are synthetic.'));
+  banner.append(bannerCopy);
+  main.append(banner);
+
+  const metricCards = [
+    { label: 'Currently admitted', value: data.metrics.activeAdmissions, detail: 'Patients in hospital', symbol: 'admission', accent: true },
+    { label: 'Registered patients', value: data.metrics.patients, detail: 'In patient directory', symbol: 'patients' },
+    { label: 'On care teams', value: data.metrics.physicians + data.metrics.nurses, detail: `${data.metrics.physicians} physicians · ${data.metrics.nurses} nurses`, symbol: 'staff' },
+    { label: 'Bed occupancy', value: `${data.metrics.occupancyPercent}%`, detail: `${data.metrics.activeAdmissions} of ${data.metrics.capacity} beds occupied`, symbol: 'ward' },
+  ];
+  const metrics = element('div', 'metric-grid');
+  for (const item of metricCards) {
+    const card = element('article', `metric-card${item.accent ? ' primary-metric' : ''}`);
+    const headIcon = element('span', 'metric-icon'); headIcon.append(icon(item.symbol));
+    card.append(element('div', 'metric-label', item.label), headIcon);
+    const bottom = element('div');
+    bottom.append(element('div', 'metric-value', item.value), element('div', 'metric-detail', item.detail));
+    card.append(bottom);
+    metrics.append(card);
+  }
+  main.append(metrics);
+
+  const layout = element('div', 'dashboard-grid');
+  const trendPanel = element('section', 'panel');
+  trendPanel.append(panelHeading('Admission activity', 'Month-by-month admissions, past 6 months', 'All admissions', () => navigate('admissions')));
+  const chartShell = element('div', 'chart-shell');
+  const legend = element('div', 'chart-legend'); legend.append(element('span', 'legend-dot'), document.createTextNode('Admissions recorded'));
+  const chartPeak = element('div', 'chart-peak');
+  const sum = data.months.reduce((total, month) => total + month.count, 0);
+  chartPeak.append(element('strong', '', sum), element('span', '', 'in the last six calendar months'));
+  const chartBox = element('div', 'chart-viewport'); chartBox.append(buildChart(data.months));
+  const axis = element('div', 'chart-axis'); data.months.forEach((month) => axis.append(element('span', '', month.month)));
+  chartShell.append(legend, chartPeak, chartBox, axis); trendPanel.append(chartShell);
+
+  const right = element('div', 'right-stack');
+  const wards = element('section', 'panel');
+  wards.append(panelHeading('Ward utilization', 'Available beds across departments', 'View wards', () => navigate('wards')));
+  const wardRows = element('div', 'ward-list');
+  for (const ward of data.wards.slice(0, 5)) {
+    const row = element('div', 'ward-row'); const heading = element('div', 'ward-row-top');
+    heading.append(element('span', '', ward.name), element('span', '', `${ward.occupied} / ${ward.capacity}`));
+    const track = element('div', 'progress-track'); const fill = element('div', 'progress-fill');
+    const percent = ward.capacity ? Math.round((ward.occupied / ward.capacity) * 100) : 0;
+    fill.style.width = `${Math.min(100, percent)}%`;
+    if (percent >= 80) fill.classList.add('warm');
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', `${ward.name} occupancy`);
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.min(100, percent)));
+    track.setAttribute('aria-valuetext', `${ward.occupied} of ${ward.capacity} beds occupied`);
+    track.append(fill); row.append(heading, track); wardRows.append(row);
+  }
+  wards.append(wardRows);
+
+  const stock = element('section', 'panel');
+  stock.append(panelHeading('Pharmacy watchlist', 'Supplies at or below reorder level', 'Inventory', () => navigate('medicines')));
+  const stockRows = element('div', 'stock-list');
+  for (const item of data.lowStock.slice(0, 4)) {
+    const row = element('div', 'stock-row'); const symbol = element('span', 'stock-icon'); symbol.append(icon('alert'));
+    const copy = element('span', 'stock-row-copy');
+    copy.append(element('strong', '', item.name), element('small', '', `Reorder at ${item.reorder_level} ${item.unit}`));
+    row.append(symbol, copy, element('span', 'stock-number', `${item.stock_qty} left`));
+    stockRows.append(row);
+  }
+  if (!data.lowStock.length) stockRows.append(element('div', 'compact-empty', 'All medications are above their reorder thresholds.'));
+  stock.append(stockRows);
+  right.append(wards, stock); layout.append(trendPanel, right); main.append(layout);
+
+  const recent = element('section', 'panel section-spacer');
+  recent.append(panelHeading('Recent admissions', 'Latest patient arrivals and placement', 'Browse all', () => navigate('admissions')));
+  const wrapper = element('div', 'table-wrapper');
+  const table = element('table', 'data-table');
+  table.append(element('caption', 'sr-only', 'Recent hospital admissions'));
+  const thead = element('thead'); const heading = element('tr');
+  ['PATIENT', 'ADMISSION ID', 'WARD', 'DATE', 'STATUS'].forEach((label) => {
+    const cell = element('th', '', label);
+    cell.scope = 'col';
+    heading.append(cell);
+  });
+  thead.append(heading); const tbody = element('tbody');
+  for (const admission of data.recent) {
+    const row = element('tr'); const patient = element('td', 'table-primary');
+    const initials = admission.patient.split(' ').map((part) => part[0]).slice(0, 2).join('');
+    patient.append(element('span', 'patient-initial', initials), document.createTextNode(admission.patient));
+    const badge = element('span', `status-badge${admission.status === 'Active' ? '' : ' neutral'}`, admission.status);
+    const status = element('td'); status.append(badge);
+    row.append(patient, element('td', 'muted-cell', `#ADM-${String(admission.id).padStart(4, '0')}`),
+      element('td', '', admission.ward), element('td', 'muted-cell', shortDate(admission.admitted_on)), status);
+    tbody.append(row);
+  }
+  table.append(thead, tbody); wrapper.append(table); recent.append(wrapper);
+  const footer = element('div', 'section-summary');
+  const positive = element('span', 'summary-positive'); positive.append(icon('check'), document.createTextNode('Live from local database'));
+  footer.append(element('span', '', `Showing ${data.recent.length} most recent admissions`), positive); recent.append(footer);
+  main.append(recent);
+}
+
+function buildChart(months) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('chart-svg'); svg.setAttribute('viewBox', '0 0 640 220');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `Admissions per month: ${months.map((m) => `${m.month} ${m.count}`).join(', ')}`);
+  function shape(tag, className, attributes) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    node.setAttribute('class', className);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+    svg.append(node); return node;
+  }
+  for (let i = 0; i < 4; i += 1) shape('line', 'gridline', { x1: 0, x2: 640, y1: 35 + i * 56, y2: 35 + i * 56 });
+  const max = Math.max(6, ...months.map((m) => m.count));
+  const coords = months.map((m, i) => ({ x: i * (640 / Math.max(1, months.length - 1)), y: 195 - (m.count / max) * 157 }));
+  const points = coords.map((p) => `${p.x},${p.y}`).join(' ');
+  shape('polygon', 'chart-area', { points: `0,205 ${points} 640,205` });
+  shape('polyline', 'chart-line', { points });
+  coords.forEach(({ x, y }) => shape('circle', 'chart-dot', { cx: x, cy: y, r: 4.5 }));
+  return svg;
+}
+
+function displayField(row, field) {
+  let value = field.type === 'relation' ? row[`${field.key}_label`] : row[field.key];
+  if (field.type === 'date' && value) value = readableDate(value);
+  if (field.type === 'number' && value !== null) value = Number(value).toLocaleString('en-US');
+  if (field.key === 'sex') value = value === 'F' ? 'Female' : value === 'M' ? 'Male' : value;
+  return value === null || value === undefined || value === '' ? '—' : String(value);
+}
+
+function renderRecords(data) {
+  const definition = catalog[resource];
+  main.replaceChildren();
+  const newButton = button(`Add ${definition.singular.toLowerCase()}`, 'button primary', () => void openForm(), 'plus');
+  main.append(pageHeader(`RECORDS / ${definition.group.toUpperCase()}`, definition.label, definition.description, [newButton]));
+  const info = element('div', 'notification-note');
+  info.textContent = 'This is a self-contained demo with simulated records. Changes are saved to your local database and may affect related records.';
+  main.append(info);
+  const panel = element('section', 'panel');
+  const toolbar = element('div', 'records-toolbar');
+  const searchBox = element('label', 'search-field'); searchBox.setAttribute('aria-label', `Search ${definition.label.toLowerCase()}`);
+  searchBox.append(icon('search'));
+  const input = element('input'); input.type = 'search'; input.maxLength = 150;
+  input.placeholder = `Search ${definition.label.toLowerCase()}…`;
+  input.setAttribute('aria-label', `Search ${definition.label.toLowerCase()}`);
+  input.value = search;
+  input.addEventListener('input', () => {
+    const nextSearch = input.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      search = nextSearch; page = 1;
+      void refreshTable();
+    }, 260);
+  });
+  searchBox.append(input);
+  const actions = element('div', 'records-toolbar-actions');
+  actions.append(element('span', 'record-count', `${data.total.toLocaleString('en-US')} records`));
+  const exportButton = button('Export CSV', 'button secondary', () => {
+    clearTimeout(searchTimer);
+    search = input.value;
+    page = 1;
+    void downloadCsv(resource, search, exportButton);
+  });
+  actions.append(exportButton);
+  toolbar.append(searchBox, actions);
+  panel.append(toolbar);
+  panel.append(buildRecordTable(data, definition));
+  main.append(panel);
+  if (focusSearchOnRender) {
+    focusSearchOnRender = false;
+    input.focus();
+  }
+}
+
+function buildRecordTable(data, definition) {
+  const container = element('div', 'records-table-container');
+  if (data.rows.length === 0) {
+    const empty = element('div', 'empty-state'); const pictogram = element('span', 'empty-icon'); pictogram.append(icon(definition.icon));
+    empty.append(pictogram, element('h3', '', search ? 'No matches found' : `No ${definition.label.toLowerCase()} yet`),
+      element('p', '', search ? 'Try a different name or keyword.' : `Add your first ${definition.singular.toLowerCase()} to get started.`));
+    if (search) empty.append(button('Clear search', 'button secondary', () => {
+      search = ''; page = 1; focusSearchOnRender = true; void render();
+    }));
+    else empty.append(button(`Add ${definition.singular.toLowerCase()}`, 'button primary', () => void openForm(), 'plus'));
+    container.append(empty);
+  } else {
+    const wrapper = element('div', 'table-wrapper'); const table = element('table', 'data-table record-table');
+    table.append(element('caption', 'sr-only', `${definition.label} records`));
+    const header = element('thead'); const headRow = element('tr');
+    const idHeading = element('th', '', 'ID');
+    idHeading.scope = 'col';
+    headRow.append(idHeading);
+    for (const key of definition.columns) {
+      const columnHeading = element('th', '', definition.fields.find((field) => field.key === key)?.label || key);
+      columnHeading.scope = 'col';
+      headRow.append(columnHeading);
+    }
+    const actionHeading = element('th', '', 'ACTIONS');
+    actionHeading.scope = 'col';
+    headRow.append(actionHeading); header.append(headRow);
+    const body = element('tbody');
+    for (const row of data.rows) {
+      const tr = element('tr'); tr.append(element('td', 'muted-cell', `#${String(row.id).padStart(4, '0')}`));
+      definition.columns.forEach((key, index) => {
+        const field = definition.fields.find((item) => item.key === key);
+        const cell = element('td', index === 0 ? 'table-primary' : '');
+        cell.textContent = displayField(row, field);
+        cell.title = cell.textContent;
+        tr.append(cell);
+      });
+      const actions = element('td'); const controls = element('div', 'table-actions');
+      const edit = button('', '', () => void openForm(row.id), 'edit');
+      edit.setAttribute('aria-label', `Edit ${definition.singular.toLowerCase()} #${row.id}`);
+      const remove = button('', 'delete', () => openDelete(row), 'trash');
+      remove.setAttribute('aria-label', `Delete ${definition.singular.toLowerCase()} #${row.id}`);
+      controls.append(edit, remove); actions.append(controls); tr.append(actions); body.append(tr);
+    }
+    table.append(header, body); wrapper.append(table); container.append(wrapper);
+  }
+  const footer = element('div', 'panel-footer');
+  const first = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
+  const range = element('p', '', `Showing ${first}–${Math.min(data.page * data.pageSize, data.total)} of ${data.total} records`);
+  range.setAttribute('role', 'status');
+  footer.append(range);
+  const pager = element('div', 'pagination');
+  pager.setAttribute('role', 'navigation');
+  pager.setAttribute('aria-label', `${definition.label} pages`);
+  const prev = button('', '', () => { page -= 1; void refreshTable({ focusPager: 'previous' }); }, 'chevron');
+  prev.firstChild.style.transform = 'rotate(180deg)'; prev.disabled = page === 1; prev.setAttribute('aria-label', 'Previous page');
+  const next = button('', '', () => { page += 1; void refreshTable({ focusPager: 'next' }); }, 'chevron');
+  next.disabled = data.page >= data.pages; next.setAttribute('aria-label', 'Next page');
+  pager.append(prev, element('span', 'page-number', `${data.page} / ${data.pages}`), next);
+  footer.append(pager); container.append(footer);
+  return container;
+}
+
+async function refreshTable({ focusPager } = {}) {
+  const sequence = ++loadSequence;
+  const target = main.querySelector('.records-table-container');
+  target?.setAttribute('aria-busy', 'true');
+  target?.querySelectorAll('.pagination button').forEach((item) => { item.disabled = true; });
+  try {
+    const result = await api(`records/${resource}?${new URLSearchParams({ search, page, pageSize: 10 })}`);
+    if (sequence !== loadSequence) return;
+    if (page > result.pages) { page = result.pages; return refreshTable({ focusPager }); }
+    const replacement = buildRecordTable(result, catalog[resource]);
+    target?.replaceWith(replacement);
+    const count = main.querySelector('.record-count');
+    if (count) count.textContent = `${result.total.toLocaleString('en-US')} records`;
+    if (focusPager) {
+      const buttons = replacement.querySelectorAll('.pagination button');
+      const preferred = buttons[focusPager === 'next' ? 1 : 0];
+      (preferred?.disabled ? buttons[focusPager === 'next' ? 0 : 1] : preferred)?.focus();
+    }
+  } catch (error) {
+    if (sequence !== loadSequence) return;
+    const replacement = element('div', 'records-table-container');
+    const message = element('div', 'error-panel');
+    message.setAttribute('role', 'alert');
+    const retry = button('Retry loading records', 'button secondary', () => void refreshTable());
+    message.append(document.createTextNode(error.message), retry);
+    replacement.append(message);
+    target?.replaceWith(replacement);
+    const count = main.querySelector('.record-count');
+    if (count) count.textContent = 'Records unavailable';
+    if (focusPager) retry.focus();
+  } finally {
+    if (sequence === loadSequence) target?.removeAttribute('aria-busy');
+  }
+}
+
+async function openForm(id = null) {
+  const targetResource = resource;
+  const definition = catalog[targetResource];
+  const sequence = ++formSequence;
+  formReady = false;
+  formSaving = false;
+  currentRecord = id;
+  document.querySelector('#form-submit').disabled = true;
+  const title = document.querySelector('#dialog-title');
+  title.textContent = `${id === null ? 'Add' : 'Edit'} ${definition.singular.toLowerCase()}`;
+  document.querySelector('#form-submit').textContent = id === null ? 'Create record' : 'Save changes';
+  document.querySelector('#form-error').hidden = true;
+  fieldsElement.replaceChildren(element('p', 'loading', 'Preparing form…'));
+  recordDialog.showModal();
+  try {
+    const record = id === null ? {} : await api(`records/${targetResource}/${id}`);
+    const relationships = new Map();
+    await Promise.all(definition.fields.filter((field) => field.type === 'relation').map(async (field) => {
+      relationships.set(field.key, await api(`lookup/${field.resource}`));
+    }));
+    if (!recordDialog.open || resource !== targetResource || currentRecord !== id || sequence !== formSequence) return;
+    fieldsElement.replaceChildren();
+    for (const field of definition.fields) {
+      const wrap = element('div', `form-field${field.type === 'textarea' ? ' full' : ''}`);
+      const label = element('label', '', field.label);
+      label.htmlFor = `field-${field.key}`;
+      if (field.required) label.append(element('span', '', ' *'));
+      let control;
+      if (field.type === 'relation' || field.type === 'select') {
+        control = element('select');
+        if (!field.required) { const empty = element('option', '', 'None'); empty.value = ''; control.append(empty); }
+        else { const placeholder = element('option', '', `Select ${field.label.toLowerCase()}`); placeholder.value = ''; placeholder.disabled = true; control.append(placeholder); }
+        const options = field.type === 'relation'
+          ? relationships.get(field.key).map((item) => ({ value: item.id, label: item.label }))
+          : field.options.map((option) => ({ value: option, label: option === 'F' ? 'Female' : option === 'M' ? 'Male' : option }));
+        // Relation lookups are capped. Keep the current value available when
+        // editing an older record so saving cannot silently erase its link.
+        if (field.type === 'relation' && record[field.key] != null &&
+            !options.some((option) => option.value === record[field.key])) {
+          options.unshift({ value: record[field.key], label: record[`${field.key}_label`] || `Record #${record[field.key]}` });
+        }
+        for (const option of options) { const node = element('option', '', option.label); node.value = option.value; control.append(node); }
+      } else if (field.type === 'textarea') control = element('textarea');
+      else {
+        control = element('input');
+        control.type = field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : field.type === 'time' ? 'time' : 'text';
+        if (field.type === 'number') { control.min = field.min; control.max = field.max; control.step = 1; }
+        if (field.max) control.maxLength = field.max;
+      }
+      control.id = `field-${field.key}`; control.name = field.key;
+      control.required = field.required;
+      control.value = record[field.key] ?? '';
+      if (field.type === 'relation') {
+        const searchControl = element('input', 'relation-search');
+        searchControl.type = 'search';
+        searchControl.maxLength = 150;
+        searchControl.autocomplete = 'off';
+        searchControl.placeholder = 'Search by name or #ID';
+        searchControl.setAttribute('aria-label', `Search ${field.label.toLowerCase()} by name or #ID`);
+        const hint = element('small', 'relation-hint');
+        hint.id = `relation-hint-${field.key}`;
+        hint.setAttribute('aria-live', 'polite');
+        searchControl.setAttribute('aria-describedby', hint.id);
+        const initialCount = relationships.get(field.key).length;
+        hint.textContent = initialCount === 100
+          ? 'Showing the first 100. Search to find other records.'
+          : `${initialCount} available ${initialCount === 1 ? 'record' : 'records'}.`;
+        let timer;
+        let requestNumber = 0;
+        searchControl.addEventListener('input', () => {
+          const request = ++requestNumber;
+          const query = searchControl.value.trim();
+          clearTimeout(timer);
+          hint.textContent = 'Searching…';
+          timer = setTimeout(async () => {
+            const isCurrent = () => request === requestNumber && sequence === formSequence &&
+              recordDialog.open && resource === targetResource && currentRecord === id && !formSaving;
+            if (!isCurrent()) return;
+            try {
+              const matches = await api(`lookup/${field.resource}?${new URLSearchParams({ search: query })}`);
+              if (!isCurrent() || searchControl.value.trim() !== query) return;
+              const selected = control.value;
+              const selectedLabel = [...control.options].find((option) => option.value === selected)?.textContent;
+              control.replaceChildren();
+              const placeholder = element('option', '', field.required ? `Select ${field.label.toLowerCase()}` : 'None');
+              placeholder.value = '';
+              if (field.required) placeholder.disabled = true;
+              control.append(placeholder);
+              // Keep the user's current choice available even when it falls
+              // outside the new search results or the 100-record result limit.
+              if (selected && !matches.some((item) => String(item.id) === selected)) {
+                const retained = element('option', '', selectedLabel || `Record #${selected}`);
+                retained.value = selected;
+                control.append(retained);
+              }
+              for (const match of matches) {
+                const option = element('option', '', match.label);
+                option.value = match.id;
+                control.append(option);
+              }
+              control.value = selected;
+              hint.textContent = matches.length === 0 ? 'No matches. Try another name or #ID.' :
+                matches.length === 100 ? 'Showing 100 results. Refine your search for more.' :
+                  `${matches.length} matching ${matches.length === 1 ? 'record' : 'records'}.`;
+            } catch (error) {
+              if (isCurrent()) hint.textContent = `${error.message} Try searching again.`;
+            }
+          }, 220);
+        });
+        wrap.append(label, searchControl, control, hint);
+      } else wrap.append(label, control);
+      fieldsElement.append(wrap);
+    }
+    formReady = true;
+    document.querySelector('#form-submit').disabled = false;
+    fieldsElement.querySelector('input,select,textarea')?.focus();
+  } catch (error) {
+    if (sequence !== formSequence || !recordDialog.open) return;
+    document.querySelector('#form-error').textContent = error.message;
+    document.querySelector('#form-error').hidden = false;
+    fieldsElement.replaceChildren();
+    document.querySelector('#form-submit').disabled = true;
+  }
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = document.querySelector('#form-submit');
+  if (!recordDialog.open || !formReady || submit.disabled) return;
+  const errorElement = document.querySelector('#form-error');
+  const targetResource = resource;
+  const targetRecord = currentRecord;
+  const sequence = formSequence;
+  const data = {};
+  for (const field of catalog[targetResource].fields) {
+    const control = form.elements.namedItem(field.key);
+    if (!control) return;
+    const value = control.value;
+    data[field.key] = value === '' && !field.required ? null :
+      (field.type === 'number' || field.type === 'relation') && value !== '' ? Number(value) : value;
+  }
+  formSaving = true;
+  submit.disabled = true; errorElement.hidden = true;
+  try {
+    await api(`records/${targetResource}${targetRecord === null ? '' : `/${targetRecord}`}`, {
+      method: targetRecord === null ? 'POST' : 'PATCH', body: JSON.stringify(data),
+    });
+    if (sequence !== formSequence || !recordDialog.open) return;
+    recordDialog.close();
+    notify(targetRecord === null ? 'Record created successfully.' : 'Changes saved successfully.');
+    await render();
+  } catch (error) {
+    if (sequence === formSequence && recordDialog.open) { errorElement.textContent = error.message; errorElement.hidden = false; }
+  } finally {
+    if (sequence === formSequence) {
+      formSaving = false;
+      if (recordDialog.open) submit.disabled = false;
+    }
+  }
+});
+
+function openDelete(row) {
+  deleteSequence += 1;
+  pendingDelete = { resource, id: row.id };
+  document.querySelector('#confirm-description').textContent =
+    `Delete ${catalog[resource].singular.toLowerCase()} #${row.id}? Related records may prevent deletion. This action cannot be undone.`;
+  confirmDialog.showModal();
+}
+
+document.querySelector('#confirm-submit').addEventListener('click', async () => {
+  const submit = document.querySelector('#confirm-submit');
+  if (!pendingDelete || !confirmDialog.open || submit.disabled) return;
+  const intent = pendingDelete;
+  const sequence = deleteSequence;
+  submit.disabled = true;
+  try {
+    await api(`records/${intent.resource}/${intent.id}`, { method: 'DELETE' });
+    if (sequence !== deleteSequence || !confirmDialog.open) return;
+    confirmDialog.close(); notify('Record deleted.'); await render();
+  } catch (error) {
+    if (sequence !== deleteSequence || !confirmDialog.open) return;
+    confirmDialog.close(); notify(error.message, true);
+  } finally {
+    if (sequence === deleteSequence) { submit.disabled = false; pendingDelete = null; }
+  }
+});
+
+document.querySelector('#dialog-close').addEventListener('click', () => { if (!formSaving) recordDialog.close(); });
+document.querySelector('#dialog-cancel').addEventListener('click', () => { if (!formSaving) recordDialog.close(); });
+document.querySelector('#confirm-cancel').addEventListener('click', () => {
+  if (!document.querySelector('#confirm-submit').disabled) confirmDialog.close();
+});
+recordDialog.addEventListener('cancel', (event) => { if (formSaving) event.preventDefault(); });
+confirmDialog.addEventListener('cancel', (event) => {
+  if (document.querySelector('#confirm-submit').disabled) event.preventDefault();
+});
+recordDialog.addEventListener('close', () => {
+  if (recordDialog.open) return;
+  formSequence += 1;
+  formReady = false;
+  formSaving = false;
+  currentRecord = null;
+  document.querySelector('#form-submit').disabled = true;
+});
+confirmDialog.addEventListener('close', () => {
+  if (confirmDialog.open) return;
+  deleteSequence += 1;
+  pendingDelete = null;
+  document.querySelector('#confirm-submit').disabled = false;
+});
+menuToggle.addEventListener('click', () => {
+  sidebar.classList.add('open');
+  syncMobileMenu();
+  document.querySelector('#menu-close').focus();
+});
+document.querySelector('#menu-close').addEventListener('click', () => closeMobileMenu({ restoreFocus: true }));
+scrim.addEventListener('click', () => closeMobileMenu({ restoreFocus: true }));
+mobileViewport.addEventListener('change', syncMobileMenu);
+syncMobileMenu();
+function focusPatientSearch() {
+  const existing = resource === 'patients' ? main.querySelector('.search-field input') : null;
+  if (existing) { existing.focus(); return; }
+  focusSearchOnRender = true;
+  navigate('patients');
+}
+document.querySelector('#quick-search').addEventListener('click', focusPatientSearch);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && sidebar.classList.contains('open')) {
+    closeMobileMenu({ restoreFocus: true });
+    return;
+  }
+  if (event.key === 'Tab' && sidebar.classList.contains('open')) {
+    const focusable = [...sidebar.querySelectorAll('button:not(:disabled)')];
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && (document.activeElement === first || !sidebar.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !sidebar.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+  if (event.key === '/' && !event.altKey && !event.ctrlKey && !event.metaKey &&
+      !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !recordDialog.open && !confirmDialog.open) {
+    event.preventDefault();
+    focusPatientSearch();
+  }
+});
+window.addEventListener('hashchange', route);
+
+async function start() {
+  try { catalog = await api('catalog'); route(); }
+  catch (error) { renderError(error.message, start); }
+}
+
+void start();
