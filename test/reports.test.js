@@ -26,10 +26,50 @@ test('reports interval occupancy, dense calendar and fanout-safe physician workl
       [admissions, discharges, census, net_flow]), [[0,0,1,0],[1,1,2,0],[0,0,1,0]]);
     assert.equal(result.wards[0].occupied_bed_days, 4);
     assert.equal(result.wards[0].utilization_pct, 66.7);
+    assert.deepEqual([
+      result.wards[0].peak_census, result.wards[0].peak_day,
+      result.wards[0].days_at_capacity, result.wards[0].days_over_capacity,
+      result.wards[0].census_bed_days,
+    ], [2, '2026-01-03', 1, 0, 4]);
     assert.equal(result.wards[1].occupied_bed_days, 0);
+    assert.deepEqual([
+      result.wards[1].peak_census, result.wards[1].days_at_capacity,
+      result.wards[1].days_over_capacity, result.wards[1].census_bed_days,
+    ], [0, 0, 0, 0]);
     assert.deepEqual([result.physicians[0].diagnoses, result.physicians[0].treatments, result.physicians[0].treated_patients], [2,2,1]);
     assert.equal(result.summary.avgStayDays, 3);
     assert.equal(result.summary.occupiedBedDays, 4);
+  } finally { db.close(); }
+});
+
+test('daily ward pressure handles capacity breaches, carried admissions and same-day discharges', () => {
+  const db = openDatabase({ file: ':memory:', seed: false });
+  try {
+    db.exec(`
+      INSERT INTO wards VALUES (1, 'Limited', '1', 'General', 1);
+      INSERT INTO wards VALUES (2, 'Open', '2', 'General', 2);
+      INSERT INTO patients VALUES (1,'A','Patient','2000-01-01','F','0');
+      INSERT INTO patients VALUES (2,'B','Patient','2000-01-01','M','0');
+      INSERT INTO patients VALUES (3,'C','Patient','2000-01-01','F','0');
+      INSERT INTO admissions VALUES (1,1,1,'2026-01-01','');
+      INSERT INTO admissions VALUES (2,2,1,'2026-01-03','');
+      INSERT INTO admissions VALUES (3,3,2,'2026-01-03','');
+      INSERT INTO discharges VALUES (1,1,'2026-01-03','Recovered','');
+      INSERT INTO discharges VALUES (2,2,'2026-01-03','Recovered','');
+      INSERT INTO discharges VALUES (3,3,'2026-01-03','Recovered','');
+    `);
+    const report = operationsReport(db, { from: '2026-01-02', to: '2026-01-04' });
+    const limited = report.wards.find((ward) => ward.name === 'Limited');
+    const open = report.wards.find((ward) => ward.name === 'Open');
+    assert.deepEqual([limited.peak_census, limited.peak_day, limited.days_at_capacity,
+      limited.days_over_capacity, limited.census_bed_days],
+    [2, '2026-01-03', 2, 1, 3]);
+    assert.deepEqual([open.peak_census, open.peak_day, open.days_at_capacity,
+      open.days_over_capacity, open.census_bed_days],
+    [1, '2026-01-03', 0, 0, 1]);
+    assert.equal(report.wards.reduce((total, ward) => total + ward.census_bed_days, 0),
+      report.summary.occupiedBedDays);
+    assert.deepEqual(report.daily.map((day) => day.census), [1, 3, 0]);
   } finally { db.close(); }
 });
 

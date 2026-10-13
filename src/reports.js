@@ -34,6 +34,48 @@ export function operationsReport(db, { from, to } = {}) {
     FROM wards w LEFT JOIN occupied o ON o.ward_id = w.id
     ORDER BY utilization_pct DESC, w.name
   `).all({ ...params, days });
+  // An event-sourced daily census avoids expanding each admission into one
+  // row per occupied date. Discharges decrement occupancy the following day
+  // because hospital stays use inclusive calendar dates.
+  const wardPressure = db.prepare(`
+    WITH RECURSIVE calendar(day) AS (
+      SELECT :from UNION ALL SELECT date(day, '+1 day') FROM calendar WHERE day < :to
+    ), opening AS (
+      SELECT a.ward_id, COUNT(*) AS occupied FROM admissions a
+      LEFT JOIN discharges d ON d.admission_id = a.id
+      WHERE a.admitted_on < :from AND (d.discharged_on IS NULL OR d.discharged_on >= :from)
+      GROUP BY a.ward_id
+    ), pulses AS (
+      SELECT ward_id, admitted_on AS day, 1 AS change FROM admissions
+      WHERE admitted_on BETWEEN :from AND :to
+      UNION ALL
+      SELECT a.ward_id, date(d.discharged_on, '+1 day') AS day, -1 AS change
+      FROM discharges d JOIN admissions a ON a.id = d.admission_id
+      WHERE d.discharged_on >= :from AND d.discharged_on < :to
+    ), daily_changes AS (
+      SELECT ward_id, day, SUM(change) AS change FROM pulses GROUP BY ward_id, day
+    ), census AS (
+      SELECT w.id AS ward_id, w.capacity, calendar.day,
+             COALESCE(o.occupied, 0) + SUM(COALESCE(dc.change, 0)) OVER (
+               PARTITION BY w.id ORDER BY calendar.day ROWS UNBOUNDED PRECEDING
+             ) AS occupied
+      FROM wards w CROSS JOIN calendar
+      LEFT JOIN opening o ON o.ward_id = w.id
+      LEFT JOIN daily_changes dc ON dc.ward_id = w.id AND dc.day = calendar.day
+    ), ranked AS (
+      SELECT *, ROW_NUMBER() OVER (
+        PARTITION BY ward_id ORDER BY occupied DESC, day ASC
+      ) AS peak_position FROM census
+    )
+    SELECT ward_id, MAX(occupied) AS peak_census,
+           MIN(CASE WHEN peak_position = 1 THEN day END) AS peak_day,
+           SUM(CASE WHEN occupied >= capacity THEN 1 ELSE 0 END) AS days_at_capacity,
+           SUM(CASE WHEN occupied > capacity THEN 1 ELSE 0 END) AS days_over_capacity,
+           SUM(occupied) AS census_bed_days
+    FROM ranked GROUP BY ward_id
+  `).all(params);
+  const pressureByWard = new Map(wardPressure.map(({ ward_id, ...pressure }) => [ward_id, pressure]));
+  for (const ward of wards) Object.assign(ward, pressureByWard.get(ward.id));
   const daily = db.prepare(`
     WITH RECURSIVE days(day) AS (
       SELECT :from UNION ALL SELECT date(day, '+1 day') FROM days WHERE day < :to
