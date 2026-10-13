@@ -103,6 +103,11 @@ test('operations report serves SQL analytics and validates date parameters over 
   assert.equal(report.daily.length, 3);
   assert.ok(Array.isArray(report.wards));
   assert.ok(Array.isArray(report.physicians));
+  assert.ok(Array.isArray(report.returns));
+  assert.equal(report.summary.discharges,
+    report.returns.reduce((sum, ward) => sum + ward.discharged_stays, 0));
+  assert.equal(report.summary.returnsWithin30Days,
+    report.returns.reduce((sum, ward) => sum + ward.returns_within_30_days, 0));
   assert.equal(report.summary.availableBedDays,
     report.wards.reduce((sum, ward) => sum + ward.capacity * 3, 0));
   assert.equal(report.summary.occupiedBedDays,

@@ -112,3 +112,44 @@ test('daily census carries in opening patients and counts discharge days inclusi
     assert.equal(report.summary.availableBedDays, 15);
   } finally { db.close(); }
 });
+
+test('return cohort uses full patient history, strict 30-day bounds and empty wards', () => {
+  const db = openDatabase({ file: ':memory:', seed: false });
+  try {
+    db.exec(`
+      INSERT INTO wards VALUES (1,'East','1','General',5);
+      INSERT INTO wards VALUES (2,'West','2','General',5);
+      INSERT INTO wards VALUES (3,'No discharges','3','General',5);
+      INSERT INTO patients VALUES (1,'A','Patient','2000-01-01','F','0');
+      INSERT INTO patients VALUES (2,'B','Patient','2000-01-01','M','0');
+      INSERT INTO patients VALUES (3,'C','Patient','2000-01-01','F','0');
+      INSERT INTO patients VALUES (4,'D','Patient','2000-01-01','M','0');
+      INSERT INTO admissions VALUES (1,1,1,'2026-01-01','');
+      INSERT INTO admissions VALUES (2,1,2,'2026-02-01','');
+      INSERT INTO admissions VALUES (3,2,1,'2026-01-01','');
+      INSERT INTO admissions VALUES (4,2,2,'2026-02-03','');
+      INSERT INTO admissions VALUES (5,3,2,'2026-01-03','');
+      INSERT INTO admissions VALUES (6,3,1,'2026-01-05','');
+      INSERT INTO admissions VALUES (7,4,2,'2026-01-01','');
+      INSERT INTO discharges VALUES (1,1,'2026-01-02','Recovered','');
+      INSERT INTO discharges VALUES (2,3,'2026-01-03','Recovered','');
+      INSERT INTO discharges VALUES (3,5,'2026-01-04','Recovered','');
+      INSERT INTO discharges VALUES (4,7,'2026-01-05','Recovered','');
+    `);
+    const report = operationsReport(db, { from: '2026-01-02', to: '2026-01-05' });
+    // Patient A returns exactly 30 days later; B returns after 31 days;
+    // C returns the next day; D has no subsequent recorded admission.
+    assert.equal(report.summary.discharges, 4);
+    assert.equal(report.summary.returnsWithin30Days, 2);
+    assert.deepEqual(report.returns.map(({ name, discharged_stays, returns_within_30_days, return_pct }) =>
+      [name, discharged_stays, returns_within_30_days, return_pct]), [
+      ['East', 2, 1, 50],
+      ['West', 2, 1, 50],
+      ['No discharges', 0, 0, null],
+    ]);
+    const narrower = operationsReport(db, { from: '2026-01-02', to: '2026-01-02' });
+    assert.equal(narrower.summary.returnsWithin30Days, 1);
+    assert.equal(narrower.summary.discharges, 1);
+    assert.equal(narrower.returns[0].return_pct, 100);
+  } finally { db.close(); }
+});

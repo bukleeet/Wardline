@@ -291,7 +291,7 @@ function renderReport(data) {
   const queryNotes = element('div', 'report-query-notes');
   for (const [number, title, detail] of [
     ['01', 'Interval arithmetic', 'Clipped, inclusive bed-days'],
-    ['02', 'Analytic windows', 'Ranked utilization and running totals'],
+    ['02', 'Analytic windows', 'Census totals and next-stay timelines'],
     ['03', 'Independent aggregates', 'No diagnosis × treatment fanout'],
     ['04', 'Event-stream census', 'Daily peaks and capacity pressure'],
   ]) {
@@ -308,6 +308,7 @@ function renderReport(data) {
     ['Bed utilization', data.summary.availableBedDays ? `${(100 * data.summary.occupiedBedDays / data.summary.availableBedDays).toFixed(1)}%` : '—', 'Occupied / available bed-days'],
     ['Average stay', data.summary.avgStayDays === null ? '—' : `${data.summary.avgStayDays} days`, 'Discharged patients'],
     ['Capacity pressure', `${pressuredWards} / ${data.wards.length}`, 'Wards reaching capacity during the range'],
+    ['30-day returns', `${data.summary.returnsWithin30Days} / ${data.summary.discharges}`, 'Discharged stays with a recorded return'],
   ];
   for (const [label, value, detail] of metrics) {
     const card = element('article', 'insight-metric');
@@ -366,6 +367,33 @@ function renderReport(data) {
   }
   table.append(tbody); tableWrap.append(table); workloadPanel.append(tableWrap);
   panels.append(wardPanel, workloadPanel); shell.append(panels);
+  const returnsPanel = element('section', 'insight-panel');
+  returnsPanel.append(panelHeading('Observed returns within 30 days',
+    'Discharges during the selected dates · next admission may fall outside the range'));
+  const returnsWrap = element('div', 'insight-table-wrap');
+  const returnsTable = element('table', 'insight-table');
+  returnsTable.append(element('caption', 'sr-only',
+    'Discharged stays and recorded subsequent admissions within 1 to 30 days, grouped by discharge ward'));
+  const returnsHead = element('tr');
+  for (const heading of ['Discharge ward', 'Discharged stays', 'Returned in 30 days', 'Observed share']) {
+    const th = element('th', '', heading); th.scope = 'col'; returnsHead.append(th);
+  }
+  const returnsThead = element('thead'); returnsThead.append(returnsHead); returnsTable.append(returnsThead);
+  const returnsBody = element('tbody');
+  for (const ward of data.returns) {
+    const tr = element('tr');
+    const name = element('th', '', ward.name); name.scope = 'row'; tr.append(name);
+    tr.append(element('td', '', ward.discharged_stays));
+    tr.append(element('td', '', ward.returns_within_30_days));
+    tr.append(element('td', 'insight-return-share', ward.return_pct === null ? '—' : `${ward.return_pct}%`));
+    returnsBody.append(tr);
+  }
+  returnsTable.append(returnsBody); returnsWrap.append(returnsTable); returnsPanel.append(returnsWrap);
+  returnsPanel.append(element('p', 'insight-method-note',
+    'A return is the next recorded admission for the same patient, 1–30 calendar days after discharge. ' +
+    'Counts reflect the available records; missing future visits and incomplete follow-up can understate returns. ' +
+    'These synthetic results are not a clinical quality measure.'));
+  shell.append(returnsPanel);
   const flow = element('section', 'insight-panel');
   flow.append(panelHeading('Daily patient flow', `${data.days} days · date-complete series with running net flow`));
   const flowTableWrap = element('div', 'insight-table-wrap');

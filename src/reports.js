@@ -122,6 +122,36 @@ export function operationsReport(db, { from, to } = {}) {
     LEFT JOIN treatment_counts t ON t.physician_id = p.id
     ORDER BY workload_rank, p.last_name, p.first_name
   `).all(params);
+  // Compute the next stay across the patient's *entire* admission history,
+  // before restricting the discharge cohort to the requested date range.
+  // Otherwise, returns that start after :to would be incorrectly missed.
+  const returns = db.prepare(`
+    WITH sequenced_stays AS (
+      SELECT id, patient_id, ward_id, admitted_on,
+             LEAD(admitted_on) OVER (
+               PARTITION BY patient_id ORDER BY admitted_on, id
+             ) AS next_admitted_on
+      FROM admissions
+    ), discharged_stays AS (
+      SELECT s.ward_id, d.discharged_on,
+             CASE WHEN julianday(s.next_admitted_on) - julianday(d.discharged_on)
+                         BETWEEN 1 AND 30 THEN 1 ELSE 0 END AS returned_within_30_days
+      FROM sequenced_stays s JOIN discharges d ON d.admission_id = s.id
+      WHERE d.discharged_on BETWEEN :from AND :to
+    ), by_ward AS (
+      SELECT ward_id, COUNT(*) AS discharged_stays,
+             SUM(returned_within_30_days) AS returns_within_30_days
+      FROM discharged_stays GROUP BY ward_id
+    )
+    SELECT w.id AS ward_id, w.name,
+           COALESCE(b.discharged_stays, 0) AS discharged_stays,
+           COALESCE(b.returns_within_30_days, 0) AS returns_within_30_days,
+           CASE WHEN b.discharged_stays > 0
+             THEN ROUND(100.0 * b.returns_within_30_days / b.discharged_stays, 1)
+             ELSE NULL END AS return_pct
+    FROM wards w LEFT JOIN by_ward b ON b.ward_id = w.id
+    ORDER BY returns_within_30_days DESC, discharged_stays DESC, w.name
+  `).all(params);
   const discharges = db.prepare(`
     SELECT COUNT(*) AS count,
            ROUND(AVG(julianday(d.discharged_on) - julianday(a.admitted_on) + 1), 1) AS avg_stay_days
@@ -132,7 +162,8 @@ export function operationsReport(db, { from, to } = {}) {
     admissions: daily.reduce((sum, row) => sum + row.admissions, 0),
     discharges: discharges.count,
     avgStayDays: discharges.avg_stay_days,
+    returnsWithin30Days: returns.reduce((sum, ward) => sum + ward.returns_within_30_days, 0),
     occupiedBedDays: wards.reduce((sum, ward) => sum + ward.occupied_bed_days, 0),
     availableBedDays: wards.reduce((sum, ward) => sum + ward.available_bed_days, 0),
-  } };
+  }, returns };
 }
