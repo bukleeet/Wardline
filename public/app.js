@@ -26,6 +26,14 @@ let deleteSequence = 0;
 let focusSearchOnRender = false;
 let searchTimer;
 let toastTimer;
+function localIsoDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+const reportToday = localIsoDate(new Date());
+const monthAgo = new Date();
+monthAgo.setDate(monthAgo.getDate() - 29);
+const reportMonthAgo = localIsoDate(monthAgo);
+let reportRange = { from: reportMonthAgo, to: reportToday };
 
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -136,7 +144,7 @@ function panelHeading(title, subtitle, actionText, action) {
 
 function setNavigation() {
   const sections = [
-    { label: 'Workspace', items: ['overview'] },
+    { label: 'Workspace', items: ['overview', 'reports'] },
     { label: 'People', items: ['patients', 'physicians', 'nurses'] },
     { label: 'Clinical records', items: ['diagnoses', 'treatments', 'illnesses', 'medicines'] },
     { label: 'Hospital operations', items: ['admissions', 'discharges', 'wards', 'nurse_assignments', 'physician_schedules', 'nurse_shifts'] },
@@ -146,7 +154,8 @@ function setNavigation() {
     const container = element('div', 'nav-section');
     container.append(element('div', 'nav-label', section.label));
     for (const key of section.items) {
-      const item = key === 'overview' ? { label: 'Overview', icon: 'grid' } : catalog[key];
+      const item = key === 'overview' ? { label: 'Overview', icon: 'grid' }
+        : key === 'reports' ? { label: 'SQL insights', icon: 'clinical' } : catalog[key];
       if (!item) continue;
       const link = button(item.label, `nav-link${resource === key ? ' active' : ''}`, () => navigate(key), item.icon);
       link.setAttribute('aria-current', resource === key ? 'page' : 'false');
@@ -192,7 +201,7 @@ function navigate(destination) {
 function route() {
   clearTimeout(searchTimer);
   const desired = location.hash.replace(/^#\/?/, '').split('/')[0];
-  const nextResource = Object.hasOwn(catalog, desired) ? desired : 'overview';
+  const nextResource = desired === 'reports' || Object.hasOwn(catalog, desired) ? desired : 'overview';
   if (nextResource !== resource) {
     if (recordDialog.open) recordDialog.close();
     if (confirmDialog.open) confirmDialog.close();
@@ -205,8 +214,9 @@ function route() {
   }
   if (nextResource !== resource) { search = ''; page = 1; }
   resource = nextResource;
-  breadcrumb.textContent = resource === 'overview' ? 'Overview' : catalog[resource].label;
-  document.title = `${resource === 'overview' ? 'Overview' : catalog[resource].label} — Wardline`;
+  const pageTitle = resource === 'overview' ? 'Overview' : resource === 'reports' ? 'SQL insights' : catalog[resource].label;
+  breadcrumb.textContent = pageTitle;
+  document.title = `${pageTitle} — Wardline`;
   setNavigation();
   void render();
 }
@@ -226,6 +236,12 @@ async function render() {
       const data = await api('dashboard');
       if (sequence === loadSequence) renderDashboard(data);
     } catch (error) { if (sequence === loadSequence) renderError(error.message); }
+  } else if (resource === 'reports') {
+    main.replaceChildren(element('div', 'loading', 'Calculating operational insights…'));
+    try {
+      const data = await api(`reports/operations?${new URLSearchParams(reportRange)}`);
+      if (sequence === loadSequence) renderReport(data);
+    } catch (error) { if (sequence === loadSequence) renderError(error.message); }
   } else {
     main.replaceChildren(element('div', 'loading', 'Loading records…'));
     try {
@@ -233,6 +249,128 @@ async function render() {
       if (sequence === loadSequence) renderRecords(data);
     } catch (error) { if (sequence === loadSequence) renderError(error.message); }
   }
+}
+
+function renderReport(data) {
+  const shell = element('div', 'insights-page');
+  const header = pageHeader('DATABASE INTELLIGENCE / 01', 'Operational insights',
+    'A precise view of capacity, patient flow, and clinical workload. Every number comes from live relational queries.');
+  const heroStamp = element('div', 'insight-hero-stamp');
+  heroStamp.append(element('span', '', 'POWERED BY'), element('strong', '', 'SQLite'), element('small', '', 'CTEs  /  WINDOW FUNCTIONS'));
+  header.append(heroStamp);
+  shell.append(header);
+  const dates = element('form', 'report-filters');
+  const filterLabel = element('div', 'report-filter-heading');
+  filterLabel.append(element('span', 'eyebrow', 'QUERY WINDOW'), element('strong', '', 'Select date range'),
+    element('small', '', 'Inclusive dates · up to 366 days'));
+  dates.append(filterLabel);
+  const dateInputs = {};
+  for (const field of ['from', 'to']) {
+    const label = element('label', 'report-date-field');
+    label.append(element('span', '', field === 'from' ? 'From' : 'Through'));
+    const input = element('input');
+    input.type = 'date'; input.name = field; input.required = true;
+    input.value = reportRange[field];
+    input.addEventListener('input', () => { dateInputs.to.setCustomValidity(''); });
+    dateInputs[field] = input;
+    label.append(input); dates.append(label);
+  }
+  const submit = element('button', 'button primary', 'Run report');
+  submit.type = 'submit'; dates.append(submit);
+  dates.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const next = Object.fromEntries(new FormData(dates));
+    const days = Math.round((Date.parse(`${next.to}T00:00:00Z`) - Date.parse(`${next.from}T00:00:00Z`)) / 86400000) + 1;
+    dateInputs.to.setCustomValidity(next.from > next.to ? 'Through date must be on or after From date.'
+      : days > 366 ? 'Choose a range of 366 days or fewer.' : '');
+    if (!dates.reportValidity()) return;
+    reportRange = next;
+    void render();
+  });
+  shell.append(dates);
+  const queryNotes = element('div', 'report-query-notes');
+  for (const [number, title, detail] of [
+    ['01', 'Interval arithmetic', 'Clipped, inclusive bed-days'],
+    ['02', 'Analytic windows', 'Ranked utilization and running totals'],
+    ['03', 'Independent aggregates', 'No diagnosis × treatment fanout'],
+  ]) {
+    const note = element('div', 'report-query-note');
+    note.append(element('span', '', number), element('strong', '', title), element('small', '', detail));
+    queryNotes.append(note);
+  }
+  shell.append(queryNotes);
+  const cards = element('div', 'insight-metrics');
+  const metrics = [
+    ['Admissions', data.summary.admissions, 'Started within window'],
+    ['Discharges', data.summary.discharges, 'Completed within window'],
+    ['Bed utilization', data.summary.availableBedDays ? `${(100 * data.summary.occupiedBedDays / data.summary.availableBedDays).toFixed(1)}%` : '—', 'Occupied / available bed-days'],
+    ['Average stay', data.summary.avgStayDays === null ? '—' : `${data.summary.avgStayDays} days`, 'Discharged patients'],
+  ];
+  for (const [label, value, detail] of metrics) {
+    const card = element('article', 'insight-metric');
+    card.append(element('span', 'eyebrow', label), element('strong', '', value), element('small', '', detail));
+    cards.append(card);
+  }
+  shell.append(cards);
+  const panels = element('div', 'insight-panels');
+  const wardPanel = element('section', 'insight-panel');
+  wardPanel.append(panelHeading('Capacity by ward', 'Inclusive bed-days over the selected period'));
+  for (const ward of data.wards) {
+    const row = element('div', 'ward-insight');
+    const header = element('div', 'ward-insight-label');
+    header.append(element('strong', '', ward.name), element('span', '', `${ward.utilization_pct}% · ${ward.occupied_bed_days}/${ward.available_bed_days} bed-days`));
+    const track = element('div', 'insight-track');
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', `${ward.name} bed utilization`);
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.min(100, Math.max(0, ward.utilization_pct))));
+    track.setAttribute('aria-valuetext', `${ward.utilization_pct}% utilization`);
+    const bar = element('div', 'insight-bar');
+    bar.style.width = `${Math.min(100, Math.max(0, ward.utilization_pct))}%`;
+    track.append(bar); row.append(header, track); wardPanel.append(row);
+  }
+  const workloadPanel = element('section', 'insight-panel');
+  workloadPanel.append(panelHeading('Physician workload', 'Separate aggregates prevent duplicate counts'));
+  const tableWrap = element('div', 'insight-table-wrap');
+  const table = element('table', 'insight-table');
+  table.append(element('caption', 'sr-only', 'Physician diagnoses, treatments and unique treated patients, ranked by activity'));
+  const thead = element('thead');
+  const headings = element('tr');
+  for (const heading of ['Rank', 'Physician', 'Diagnoses', 'Treatments', 'Patients']) {
+    const th = element('th', '', heading); th.scope = 'col'; headings.append(th);
+  }
+  thead.append(headings); table.append(thead);
+  const tbody = element('tbody');
+  for (const physician of data.physicians) {
+    const tr = element('tr');
+    tr.append(element('td', 'insight-rank', `#${String(physician.workload_rank).padStart(2, '0')}`));
+    const name = element('th', '', physician.name); name.scope = 'row'; tr.append(name);
+    for (const value of [physician.diagnoses, physician.treatments, physician.treated_patients]) tr.append(element('td', '', value));
+    tbody.append(tr);
+  }
+  table.append(tbody); tableWrap.append(table); workloadPanel.append(tableWrap);
+  panels.append(wardPanel, workloadPanel); shell.append(panels);
+  const flow = element('section', 'insight-panel');
+  flow.append(panelHeading('Daily patient flow', `${data.days} days · date-complete series with running net flow`));
+  const flowTableWrap = element('div', 'insight-table-wrap');
+  const flowTable = element('table', 'insight-table');
+  flowTable.append(element('caption', 'sr-only', 'Daily admissions, discharges, occupied census and cumulative net patient flow'));
+  const flowHead = element('tr');
+  for (const heading of ['Date', 'Admissions', 'Discharges', 'Census', 'Net flow']) {
+    const th = element('th', '', heading); th.scope = 'col'; flowHead.append(th);
+  }
+  const flowThead = element('thead'); flowThead.append(flowHead); flowTable.append(flowThead);
+  const flowBody = element('tbody');
+  for (const day of data.daily) {
+    const tr = element('tr');
+    const date = element('th', '', readableDate(day.day)); date.scope = 'row'; tr.append(date);
+    for (const value of [day.admissions, day.discharges, day.census, day.net_flow]) tr.append(element('td', '', value));
+    flowBody.append(tr);
+  }
+  flowTable.append(flowBody); flowTableWrap.append(flowTable); flow.append(flowTableWrap); shell.append(flow);
+  shell.append(element('p', 'insight-note', 'Synthetic demonstration data. Occupancy counts admission and discharge dates. Net flow is cumulative change within the selected range.'));
+  main.replaceChildren(shell);
 }
 
 function renderDashboard(data) {
