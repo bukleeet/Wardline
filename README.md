@@ -27,7 +27,7 @@ cd Hospital-DB
 npm start
 ```
 
-Open **http://127.0.0.1:3000**. Wardline creates `data/wardline.sqlite` on first launch and inserts deterministic synthetic records. Data changes persist across restarts. Existing installations with `data/hospital.sqlite` continue using that database automatically.
+Open **http://127.0.0.1:3000**. Wardline creates `data/hospital.sqlite` on first launch and inserts deterministic synthetic records. Data changes persist across restarts.
 
 Useful commands:
 
@@ -38,7 +38,7 @@ npm run format:css # format the readable stylesheet
 npm run check   # syntax, CSS formatting, and all tests
 ```
 
-Configuration: `PORT` sets the HTTP port (default `3000`), and `HOSPITAL_DB_PATH` sets the SQLite file location (default `data/wardline.sqlite`). For backwards compatibility, an existing `data/hospital.sqlite` is used when the new default file is absent. The default host is `127.0.0.1`; keep the demo bound to a local interface. To reset the demonstration, stop the server and delete the selected SQLite file and any adjacent `-wal`/`-shm` files. The initial synthetic dataset will be recreated at next launch.
+Configuration: `PORT` sets the HTTP port (default `3000`), and `HOSPITAL_DB_PATH` sets the SQLite file location (default `data/hospital.sqlite`). The default host is `127.0.0.1`; keep the demo bound to a local interface. To reset the demonstration, stop the server and delete `data/hospital.sqlite` and any adjacent `-wal`/`-shm` files. The initial synthetic dataset will be recreated at next launch.
 
 Node currently marks `node:sqlite` experimental, so an experimental feature warning can appear in the console.
 
