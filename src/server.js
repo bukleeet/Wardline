@@ -7,12 +7,14 @@ import { publicCatalog } from './catalog.js';
 import { exportCsv } from './export.js';
 import { operationsReport } from './reports.js';
 import { integrityReport } from './integrity.js';
+import { queryLab } from './query-lab.js';
 import { AppError, createRecord, dashboard, deleteRecord, getRecord, listRecords, lookup, updateRecord } from './repository.js';
 
 const publicPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const staticFiles = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+  '/visual-polish.css': ['visual-polish.css', 'text/css; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
 };
@@ -89,6 +91,9 @@ export function createServer({ db = openDatabase() } = {}) {
           from: url.searchParams.get('from'), to: url.searchParams.get('to'),
         }));
         if (req.method === 'GET' && path === '/api/reports/integrity') return respond(res, 200, integrityReport(db));
+        if (req.method === 'GET' && path === '/api/reports/query-lab') return respond(res, 200, queryLab(db, {
+          from: url.searchParams.get('from'), to: url.searchParams.get('to'),
+        }));
 
         const exported = path.match(/^\/api\/export\/([a-z_]+)$/);
         if (req.method === 'GET' && exported) return respondCsv(res, exported[1], exportCsv(db, exported[1], {

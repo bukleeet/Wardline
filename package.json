@@ -12,6 +12,6 @@
     "dev": "node --watch src/server.js",
     "format:css": "node scripts/format-css.mjs",
     "test": "node --test",
-    "check": "node --check src/catalog.js && node --check src/database.js && node --check src/migrations.js && node --check src/export.js && node --check src/integrity.js && node --check src/reports.js && node --check src/repository.js && node --check src/seed.js && node --check src/server.js && node --check public/app.js && node --check scripts/format-css.mjs && node scripts/format-css.mjs --check && node --test"
+    "check": "node --check src/catalog.js && node --check src/database.js && node --check src/migrations.js && node --check src/export.js && node --check src/integrity.js && node --check src/reports.js && node --check src/query-lab.js && node --check src/repository.js && node --check src/seed.js && node --check src/server.js && node --check public/app.js && node --check scripts/format-css.mjs && node scripts/format-css.mjs --check && node --test"
   }
 }

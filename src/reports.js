@@ -1,17 +1,70 @@
 import { AppError } from './repository.js';
 
+// Shared statements keep the live reports and their explain plans in sync.
+export const PHYSICIAN_WORKLOAD_SQL = `
+    WITH diagnosis_counts AS (
+      SELECT physician_id, COUNT(*) AS diagnoses FROM diagnoses
+      WHERE diagnosed_on BETWEEN :from AND :to GROUP BY physician_id
+    ), treatment_counts AS (
+      SELECT physician_id, COUNT(*) AS treatments, COUNT(DISTINCT patient_id) AS treated_patients
+      FROM treatments WHERE performed_on BETWEEN :from AND :to AND physician_id IS NOT NULL
+      GROUP BY physician_id
+    )
+    SELECT p.id, p.first_name || ' ' || p.last_name AS name, p.specialty,
+           COALESCE(d.diagnoses, 0) AS diagnoses,
+           COALESCE(t.treatments, 0) AS treatments,
+           COALESCE(t.treated_patients, 0) AS treated_patients,
+           RANK() OVER (ORDER BY COALESCE(d.diagnoses, 0) + COALESCE(t.treatments, 0) DESC) AS workload_rank
+    FROM physicians p LEFT JOIN diagnosis_counts d ON d.physician_id = p.id
+    LEFT JOIN treatment_counts t ON t.physician_id = p.id
+    ORDER BY workload_rank, p.last_name, p.first_name
+`;
+
+export const RECORDED_RETURNS_SQL = `
+    WITH sequenced_stays AS (
+      SELECT id, patient_id, ward_id, admitted_on,
+             LEAD(admitted_on) OVER (
+               PARTITION BY patient_id ORDER BY admitted_on, id
+             ) AS next_admitted_on
+      FROM admissions
+    ), discharged_stays AS (
+      SELECT s.ward_id, d.discharged_on,
+             CASE WHEN julianday(s.next_admitted_on) - julianday(d.discharged_on)
+                         BETWEEN 1 AND 30 THEN 1 ELSE 0 END AS returned_within_30_days
+      FROM sequenced_stays s JOIN discharges d ON d.admission_id = s.id
+      WHERE d.discharged_on BETWEEN :from AND :to
+    ), by_ward AS (
+      SELECT ward_id, COUNT(*) AS discharged_stays,
+             SUM(returned_within_30_days) AS returns_within_30_days
+      FROM discharged_stays GROUP BY ward_id
+    )
+    SELECT w.id AS ward_id, w.name,
+           COALESCE(b.discharged_stays, 0) AS discharged_stays,
+           COALESCE(b.returns_within_30_days, 0) AS returns_within_30_days,
+           CASE WHEN b.discharged_stays > 0
+             THEN ROUND(100.0 * b.returns_within_30_days / b.discharged_stays, 1)
+             ELSE NULL END AS return_pct
+    FROM wards w LEFT JOIN by_ward b ON b.ward_id = w.id
+    ORDER BY returns_within_30_days DESC, discharged_stays DESC, w.name
+`;
+
 function validDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? '')) return false;
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function operationsReport(db, { from, to } = {}) {
+export function reportWindow({ from, to } = {}) {
   if (!validDate(from) || !validDate(to) || from > to) {
     throw new AppError(400, 'Provide valid from and to dates (YYYY-MM-DD) in chronological order');
   }
   const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
   if (days > 366) throw new AppError(400, 'Report range must not exceed 366 days');
+  return { from, to, days };
+}
+
+export function operationsReport(db, { from, to } = {}) {
+  const { days } = reportWindow({ from, to });
   const params = { from, to };
   // Bed days count both admission and discharge dates. Preaggregate each
   // relation separately to prevent fanout when reporting physician workload.
@@ -104,54 +157,11 @@ export function operationsReport(db, { from, to } = {}) {
            SUM(admissions - discharges) OVER (ORDER BY day ROWS UNBOUNDED PRECEDING) AS net_flow
     FROM shifted ORDER BY day
   `).all(params);
-  const physicians = db.prepare(`
-    WITH diagnosis_counts AS (
-      SELECT physician_id, COUNT(*) AS diagnoses FROM diagnoses
-      WHERE diagnosed_on BETWEEN :from AND :to GROUP BY physician_id
-    ), treatment_counts AS (
-      SELECT physician_id, COUNT(*) AS treatments, COUNT(DISTINCT patient_id) AS treated_patients
-      FROM treatments WHERE performed_on BETWEEN :from AND :to AND physician_id IS NOT NULL
-      GROUP BY physician_id
-    )
-    SELECT p.id, p.first_name || ' ' || p.last_name AS name, p.specialty,
-           COALESCE(d.diagnoses, 0) AS diagnoses,
-           COALESCE(t.treatments, 0) AS treatments,
-           COALESCE(t.treated_patients, 0) AS treated_patients,
-           RANK() OVER (ORDER BY COALESCE(d.diagnoses, 0) + COALESCE(t.treatments, 0) DESC) AS workload_rank
-    FROM physicians p LEFT JOIN diagnosis_counts d ON d.physician_id = p.id
-    LEFT JOIN treatment_counts t ON t.physician_id = p.id
-    ORDER BY workload_rank, p.last_name, p.first_name
-  `).all(params);
+  const physicians = db.prepare(PHYSICIAN_WORKLOAD_SQL).all(params);
   // Compute the next stay across the patient's *entire* admission history,
   // before restricting the discharge cohort to the requested date range.
   // Otherwise, returns that start after :to would be incorrectly missed.
-  const returns = db.prepare(`
-    WITH sequenced_stays AS (
-      SELECT id, patient_id, ward_id, admitted_on,
-             LEAD(admitted_on) OVER (
-               PARTITION BY patient_id ORDER BY admitted_on, id
-             ) AS next_admitted_on
-      FROM admissions
-    ), discharged_stays AS (
-      SELECT s.ward_id, d.discharged_on,
-             CASE WHEN julianday(s.next_admitted_on) - julianday(d.discharged_on)
-                         BETWEEN 1 AND 30 THEN 1 ELSE 0 END AS returned_within_30_days
-      FROM sequenced_stays s JOIN discharges d ON d.admission_id = s.id
-      WHERE d.discharged_on BETWEEN :from AND :to
-    ), by_ward AS (
-      SELECT ward_id, COUNT(*) AS discharged_stays,
-             SUM(returned_within_30_days) AS returns_within_30_days
-      FROM discharged_stays GROUP BY ward_id
-    )
-    SELECT w.id AS ward_id, w.name,
-           COALESCE(b.discharged_stays, 0) AS discharged_stays,
-           COALESCE(b.returns_within_30_days, 0) AS returns_within_30_days,
-           CASE WHEN b.discharged_stays > 0
-             THEN ROUND(100.0 * b.returns_within_30_days / b.discharged_stays, 1)
-             ELSE NULL END AS return_pct
-    FROM wards w LEFT JOIN by_ward b ON b.ward_id = w.id
-    ORDER BY returns_within_30_days DESC, discharged_stays DESC, w.name
-  `).all(params);
+  const returns = db.prepare(RECORDED_RETURNS_SQL).all(params);
   const discharges = db.prepare(`
     SELECT COUNT(*) AS count,
            ROUND(AVG(julianday(d.discharged_on) - julianday(a.admitted_on) + 1), 1) AS avg_stay_days

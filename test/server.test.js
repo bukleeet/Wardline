@@ -71,7 +71,7 @@ test('serves secure static assets, HEAD, and health checks', async () => {
   assert.match(index.text, /Wardline/);
   assert.match(index.headers['Content-Security-Policy'], /default-src 'none'/);
   assert.equal(index.headers['X-Content-Type-Options'], 'nosniff');
-  for (const asset of ['styles.css', 'app.js', 'favicon.svg']) {
+  for (const asset of ['styles.css', 'visual-polish.css', 'app.js', 'favicon.svg']) {
     const response = await request('GET', `/${asset}`);
     assert.equal(response.status, 200, asset);
     assert.ok(response.text.length > 100, asset);
@@ -126,6 +126,33 @@ test('operations report serves SQL analytics and validates date parameters over 
     '?from=2026-02-29&to=2026-03-01',
   ]) {
     const error = await request('GET', `/api/reports/operations${query}`);
+    assert.equal(error.status, 400, query);
+    assert.equal(typeof error.json().error, 'string');
+  }
+});
+
+test('query lab serves real, parameterized plans over HTTP and rejects invalid ranges', async () => {
+  const before = db.prepare('SELECT total_changes() AS count').get().count;
+  const response = await request('GET', '/api/reports/query-lab?from=2026-01-01&to=2026-01-31');
+  assert.equal(response.status, 200);
+  const lab = response.json();
+  assert.deepEqual([lab.from, lab.to], ['2026-01-01', '2026-01-31']);
+  assert.deepEqual(lab.examples.map(({ id }) => id),
+    ['patient-timeline', 'physician-workload', 'recorded-returns']);
+  assert.ok(lab.examples.every(({ sql, bindings, plan }) =>
+    (sql.startsWith('SELECT') || sql.startsWith('WITH'))
+    && Object.keys(bindings).length > 0
+    && plan.length > 0 && plan.every(({ detail }) => typeof detail === 'string')));
+  assert.match(lab.examples[0].plan.map(({ detail }) => detail).join(' '),
+    /USING INDEX idx_admissions_patient_date_id/);
+  assert.equal(db.prepare('SELECT total_changes() AS count').get().count, before);
+
+  for (const query of [
+    '', '?from=2026-01-01', '?from=2026-03-02&to=2026-03-01',
+    '?from=2026-01-01&to=2027-01-02',
+    '?from=2026-01-01%27%20OR%201%3D1--&to=2026-01-31',
+  ]) {
+    const error = await request('GET', `/api/reports/query-lab${query}`);
     assert.equal(error.status, 400, query);
     assert.equal(typeof error.json().error, 'string');
   }

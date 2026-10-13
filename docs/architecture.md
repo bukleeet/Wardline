@@ -8,12 +8,14 @@ Wardline is a dependency-free demonstration web application. A Node.js HTTP hand
 | --- | --- |
 | `public/index.html` | Semantic app shell, navigation targets, modal dialogs, SVG symbols |
 | `public/styles.css` | Responsive layout, typography, visual components, focus/reduced-motion styles |
+| `public/visual-polish.css` | Scoped, responsive visual refinements loaded after the base stylesheet |
 | `public/app.js` | Routing, asynchronous UI state, CRUD interactions, table pagination, chart rendering |
 | `src/server.js` | Static-file allowlist, content/security headers, body size limit, API routing, HTTP errors |
 | `src/export.js` | Bounded CSV downloads with full form fields, relation labels, and formula escaping |
 | `src/catalog.js` | Whitelisted resources, labels, field types, constraints, relation destinations |
 | `src/repository.js` | Parameterized CRUD/search SQL, transactions, validation, cross-record rules, dashboard queries |
 | `src/reports.js` | Parameterized, date-bounded operational SQL analytics with CTEs and window functions |
+| `src/query-lab.js` | Curated read-only SQL examples with bound parameters and live SQLite query plans |
 | `src/integrity.js` | Read-only SQL checks for seven cross-record data integrity rules, with bounded examples |
 | `src/database.js` | SQLite connections, transactional migration runner, first-run seeding |
 | `src/migrations.js` + `src/migrations/*.sql` | Ordered SQL schema versions and unversioned-schema compatibility checks |
@@ -72,7 +74,7 @@ The response includes a total violation count, per-rule counts, and at most thre
 
 `GET /api/export/:resource?search=...` returns a UTF-8 CSV download containing all matching records and all form fields, with extra human-readable labels for relationships. The same search validation applies; exports above 5,000 rows are rejected with `422` so the local demo remains responsive. Text cells that could be evaluated as spreadsheet formulas are prefixed with an apostrophe.
 
-The server serves only four explicitly mapped static URLs (`/`, `/styles.css`, `/app.js`, and `/favicon.svg`). CSP, frame restrictions, no-sniff, no-referrer, and no-store headers are supplied. The default binding is `127.0.0.1`; running it on a public interface or with real records is unsupported.
+The server serves only five explicitly mapped static URLs (`/`, `/styles.css`, `/visual-polish.css`, `/app.js`, and `/favicon.svg`). CSP, frame restrictions, no-sniff, no-referrer, and no-store headers are supplied. The default binding is `127.0.0.1`; running it on a public interface or with real records is unsupported.
 
 ## Schema migrations and query plans
 
@@ -81,6 +83,8 @@ Wardline stores its schema version in SQLite's `PRAGMA user_version`. `src/migra
 Version-zero databases with existing schema objects are treated as pre-migration installations rather than new databases. Before adopting them, the runner checks all 13 expected tables and their column layouts, then idempotently ensures the original indexes exist and applies subsequent upgrades. This preserves existing records, even if a user deliberately deleted every row. An unrelated or partially formed database is rejected. A file whose schema version exceeds the app's supported version also fails without modification. If upgrading a real local demo file, stop the server and back up the SQLite file before starting the updated app.
 
 The second migration adds `(patient_id, admitted_on, id)` to accelerate patient admission histories (including the `LEAD` return-window analysis), plus `(patient_id, diagnosed_on)` and `(patient_id, performed_on)` for chronological diagnosis and treatment lookups. `test/database.test.js` inspects `EXPLAIN QUERY PLAN` to verify SQLite selects these indexes for bounded patient timeline queries; it avoids fragile wall-clock performance thresholds. Query planner choices and true throughput will vary with data volume and distribution; the small synthetic fixture is not a production benchmark.
+
+`GET /api/reports/query-lab?from=YYYY-MM-DD&to=YYYY-MM-DD` accepts the same validated 1–366 day range as the operational report. It returns three curated, fixed statements alongside their parameter bindings and the current database's `EXPLAIN QUERY PLAN` steps. The patient timeline case is an indexed lookup; physician workload and recorded returns reuse exported SQL constants from `src/reports.js`, so the queries inspected in the UI are exactly those run by reporting. The endpoint never accepts SQL text from a client or executes the underlying data queries to generate the plans. It is read-only, and `test/query-lab.test.js` plus the HTTP tests verify the output and invalid input handling. See [SQL engineering deep dive](sql-deep-dive.md).
 
 To introduce a change, add the next numbered `.sql` file to `src/migrations/`, append its entry to the registry, and add regression tests for both a fresh database and upgrades from older versions. Keep released files immutable: existing installations can already have applied them. SQL migration statements must not contain their own `BEGIN`/`COMMIT` boundaries because the runner manages the transaction.
 
