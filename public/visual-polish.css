@@ -13,6 +13,70 @@
   --shadow: 0 14px 44px rgba(25, 55, 49, .045);
 }
 
+/* Quiet, warm scrollbars that remain easy to find while scrolling. */
+html {
+  scrollbar-color: #a7bdb4 #edf1eb;
+  scrollbar-width: thin;
+}
+
+body,
+.sidebar-scroll,
+.record-dialog,
+.confirm-dialog,
+.table-scroll,
+.query-results {
+  scrollbar-color: rgba(130, 158, 147, .72) transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #edf1eb;
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 3px solid #edf1eb;
+  border-radius: 999px;
+  background: #a7bdb4;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #78998d;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track,
+.record-dialog::-webkit-scrollbar-track,
+.confirm-dialog::-webkit-scrollbar-track,
+.table-scroll::-webkit-scrollbar-track,
+.query-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.record-dialog::-webkit-scrollbar-thumb,
+.confirm-dialog::-webkit-scrollbar-thumb {
+  border-color: transparent;
+  background: rgba(197, 227, 214, .42);
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover,
+.record-dialog::-webkit-scrollbar-thumb:hover,
+.confirm-dialog::-webkit-scrollbar-thumb:hover {
+  background: rgba(210, 241, 226, .72);
+}
+
+@media (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+}
+
 .content-column {
   background: radial-gradient(ellipse 70% 20% at 92% 0%, rgba(202, 229, 216, .36), transparent 80%), var(--bg);
 }
