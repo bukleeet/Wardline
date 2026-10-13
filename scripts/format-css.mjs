@@ -1,6 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-const stylesheet = new URL('../public/styles.css', import.meta.url);
+const stylesheets = ['styles.css', 'visual-polish.css'].map((name) => ({
+  name,
+  url: new URL(`../public/${name}`, import.meta.url),
+}));
 const check = process.argv.includes('--check');
 
 /** Format this project's plain CSS without changing selectors or property values. */
@@ -66,13 +69,15 @@ function formatCss(source) {
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-const source = await readFile(stylesheet, 'utf8');
-const formatted = formatCss(source);
-if (check) {
-  if (source.replace(/\r\n/g, '\n') !== formatted) {
-    console.error('Stylesheet needs formatting. Run npm run format:css.');
-    process.exitCode = 1;
+for (const { name, url } of stylesheets) {
+  const source = await readFile(url, 'utf8');
+  const formatted = formatCss(source);
+  if (check) {
+    if (source.replace(/\r\n/g, '\n') !== formatted) {
+      console.error(`${name} needs formatting. Run npm run format:css.`);
+      process.exitCode = 1;
+    }
+  } else {
+    await writeFile(url, formatted);
   }
-} else {
-  await writeFile(stylesheet, formatted);
 }

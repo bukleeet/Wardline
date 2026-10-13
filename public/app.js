@@ -239,11 +239,12 @@ async function render() {
   } else if (resource === 'reports') {
     main.replaceChildren(element('div', 'loading', 'Calculating operational insights and checking integrity…'));
     try {
-      const [data, integrity] = await Promise.all([
+      const [data, integrity, lab] = await Promise.all([
         api(`reports/operations?${new URLSearchParams(reportRange)}`),
         api('reports/integrity'),
+        api(`reports/query-lab?${new URLSearchParams(reportRange)}`),
       ]);
-      if (sequence === loadSequence) renderReport(data, integrity);
+      if (sequence === loadSequence) renderReport(data, integrity, lab);
     } catch (error) { if (sequence === loadSequence) renderError(error.message); }
   } else {
     main.replaceChildren(element('div', 'loading', 'Loading records…'));
@@ -254,7 +255,7 @@ async function render() {
   }
 }
 
-function renderReport(data, integrity) {
+function renderReport(data, integrity, lab) {
   const shell = element('div', 'insights-page');
   const header = pageHeader('DATABASE INTELLIGENCE / 01', 'Operational insights',
     'A precise view of capacity, patient flow, and clinical workload. Every number comes from live relational queries.');
@@ -319,6 +320,7 @@ function renderReport(data, integrity) {
     cards.append(card);
   }
   shell.append(cards);
+  shell.append(renderQueryLab(lab));
   shell.append(renderIntegrity(integrity));
   const panels = element('div', 'insight-panels');
   const wardPanel = element('section', 'insight-panel');
@@ -420,12 +422,61 @@ function renderReport(data, integrity) {
   main.replaceChildren(shell);
 }
 
+function renderQueryLab(lab) {
+  const section = element('section', 'query-lab');
+  section.setAttribute('aria-labelledby', 'query-lab-title');
+  const intro = element('div', 'query-lab-intro');
+  const title = element('h2', '', 'Read the query. Inspect the plan.');
+  title.id = 'query-lab-title';
+  intro.append(element('span', 'eyebrow', 'UNDER THE HOOD / 02'), title,
+    element('p', '', 'A transparent look at real SQLite query plans for fixed, parameterized SQL. Two statements are the exact queries powering the reports on this page.'));
+  const heading = element('div', 'query-lab-heading');
+  heading.append(intro, element('span', 'query-lab-badge', 'EXPLAIN QUERY PLAN · READ ONLY'));
+  section.append(heading);
+  const list = element('div', 'query-lab-list');
+  for (const [index, example] of lab.examples.entries()) {
+    const item = element('details', 'query-lab-item');
+    if (index === 0) item.open = true;
+    const summary = element('summary', 'query-lab-summary');
+    const identity = element('span', 'query-lab-identity');
+    identity.append(element('span', 'query-lab-index', String(index + 1).padStart(2, '0')),
+      element('span', 'query-lab-title', example.title));
+    summary.append(identity, element('span', 'query-lab-technique', example.technique));
+    item.append(summary);
+    const body = element('div', 'query-lab-body');
+    body.append(element('p', 'query-lab-description', example.explanation),
+      element('p', 'query-lab-context', example.context));
+    const columns = element('div', 'query-lab-columns');
+    const source = element('div', 'query-lab-code');
+    const code = element('pre');
+    code.append(element('code', '', example.sql));
+    source.append(element('div', 'query-lab-caption', 'PARAMETERIZED SQL'), code);
+    const output = element('div', 'query-lab-plan');
+    output.append(element('div', 'query-lab-caption', 'SQLITE PLANNER OUTPUT'));
+    const bindings = element('div', 'query-lab-bindings');
+    for (const [key, value] of Object.entries(example.bindings)) {
+      bindings.append(element('span', '', `:${key} = ${value}`));
+    }
+    output.append(bindings);
+    const steps = element('ol', 'query-lab-steps');
+    for (const node of example.plan) steps.append(element('li', '', node.detail));
+    output.append(steps);
+    columns.append(source, output);
+    body.append(columns);
+    item.append(body);
+    list.append(item);
+  }
+  section.append(list, element('p', 'query-lab-footnote',
+    'Plans describe SQLite’s estimated access paths for the current schema and dataset; they are not timing benchmarks. Planner choices can change as data and statistics change.'));
+  return section;
+}
+
 function renderIntegrity(integrity) {
   const audit = element('section', 'integrity-section');
   audit.setAttribute('aria-labelledby', 'integrity-heading');
   const heading = element('div', 'integrity-heading');
   const introduction = element('div', 'integrity-intro');
-  introduction.append(element('span', 'eyebrow', 'DATABASE HEALTH / 02'));
+  introduction.append(element('span', 'eyebrow', 'DATABASE HEALTH / 03'));
   const title = element('h2', '', 'Integrity, by design.');
   title.id = 'integrity-heading';
   introduction.append(title, element('p', '',
@@ -468,8 +519,29 @@ function renderDashboard(data) {
   main.replaceChildren();
   const today = element('span', 'date-chip');
   today.append(icon('calendar'), document.createTextNode(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })));
-  main.append(pageHeader('YOUR WORKSPACE / OVERVIEW', 'A clearer view of care.',
-    'Monitor patient flow, care activity, bed availability, and pharmacy stock from one place.', [today]));
+  const hero = element('section', 'overview-hero');
+  hero.setAttribute('aria-labelledby', 'overview-title');
+  const copy = element('div', 'overview-hero-copy');
+  copy.append(element('span', 'overview-kicker', 'WARDLINE  /  OPERATIONS DESK'));
+  const title = element('h1', '', 'A clearer view of care.');
+  title.id = 'overview-title';
+  copy.append(title, element('p', '',
+    'From patient flow to capacity pressure, one connected workspace puts the hospital’s moving parts into focus.'));
+  const actions = element('div', 'overview-hero-actions');
+  actions.append(button('Explore SQL insights', 'button overview-primary-action', () => navigate('reports'), 'arrow'),
+    button('Browse patient records', 'button overview-secondary-action', () => navigate('patients')));
+  copy.append(actions);
+  const visual = element('div', 'overview-hero-proof');
+  visual.append(element('div', 'overview-proof-label', 'BEHIND THE DASHBOARD'));
+  const number = element('div', 'overview-proof-number');
+  number.append(element('strong', '', Object.keys(catalog).length.toString().padStart(2, '0')),
+    element('span', '', 'connected\nrecord types'));
+  visual.append(number);
+  const details = element('div', 'overview-proof-details');
+  details.append(element('span', '', 'SQLite · relational data'), element('span', '', 'Live SQL reporting'));
+  visual.append(details, today);
+  hero.append(copy, visual);
+  main.append(hero);
 
   const banner = element('div', 'demo-banner');
   banner.append(icon('check'));
