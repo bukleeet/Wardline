@@ -51,11 +51,13 @@ Node HTTP server (src/server.js)
 Repository/service layer (src/repository.js)
        | catalog-driven validation + business invariants + parameterized SQL
 SQLite database (src/database.js)
-       | foreign keys, indexes, transactions
+       | versioned SQL migrations, foreign keys, indexes, transactions
 Deterministic demo fixtures (src/seed.js)
 ```
 
 No runtime npm dependencies are required. The backend uses built-in Node HTTP and SQLite modules; the frontend uses native browser APIs. Resource definitions and form metadata live in `src/catalog.js` to keep backend validation and client forms aligned.
+
+The database schema lives in [numbered SQL migrations](src/migrations/). On startup, Wardline upgrades an existing SQLite file transactionally using `PRAGMA user_version`. Older unversioned Wardline installations are adopted without changing their records, including intentionally emptied demo databases. To add a future schema change, create a new numbered SQL migration and register it in `src/migrations.js`; never modify a released migration. See [database lifecycle](docs/architecture.md#schema-migrations-and-query-plans).
 
 See [Architecture and domain rules](docs/architecture.md) for the resource map, API contract, design decisions, and limitations.
 
@@ -80,7 +82,7 @@ The API accepts JSON for `POST` and `PATCH` and returns JSON responses. Invalid 
 
 ## Quality and testing
 
-Tests use Node's built-in test runner and fresh, in-memory SQLite databases. They cover seeded consistency, search and pagination, CRUD, validation, foreign-key behavior, bed capacity, clinical and scheduling rules, dashboard aggregation, and HTTP request handling. HTTP tests invoke the real request listener without opening a socket, which also works in restricted CI environments.
+Tests use Node's built-in test runner and isolated SQLite databases. They cover seeded consistency, search and pagination, CRUD, validation, foreign-key behavior, bed capacity, clinical and scheduling rules, dashboard aggregation, and HTTP request handling. Migration tests additionally exercise actual file persistence, unversioned upgrade compatibility, transactional rollback, rejection of future schema versions, and SQLite query plans. HTTP tests invoke the real request listener without opening a socket, which also works in restricted CI environments.
 
 The SQL reporting fixtures also check occupied-bed-day overlap across date boundaries, inclusive discharge dates, date-complete daily census, carried admissions, peak ward census, capacity pressure, 30-day return boundaries, next stays outside the report window, empty wards, length of stay, workload join fanout, leap days, and range validation. Independently computed ward census bed-days are reconciled with interval-based occupied bed-days. The report is a concrete example of nontrivial relational analytics beyond basic CRUD.
 
@@ -94,4 +96,4 @@ The repository also retains the original Java Swing/MySQL coursework in `DBAppli
 
 ### Scope and next steps
 
-Wardline is built for a local, single-user demo. Production usage would require identity and role controls, encryption, audit logging, migration tooling, observability, accessibility testing in real browsers, and a formal privacy/security review. No such production guarantees are claimed here.
+Wardline is built for a local, single-user demo. Production usage would require identity and role controls, encryption, audit logging, migration governance and backups, observability, accessibility testing in real browsers, and a formal privacy/security review. No such production guarantees are claimed here.

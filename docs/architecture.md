@@ -15,7 +15,8 @@ Wardline is a dependency-free demonstration web application. A Node.js HTTP hand
 | `src/repository.js` | Parameterized CRUD/search SQL, transactions, validation, cross-record rules, dashboard queries |
 | `src/reports.js` | Parameterized, date-bounded operational SQL analytics with CTEs and window functions |
 | `src/integrity.js` | Read-only SQL checks for seven cross-record data integrity rules, with bounded examples |
-| `src/database.js` | SQLite schema, foreign keys, indexes, first-run initialization |
+| `src/database.js` | SQLite connections, transactional migration runner, first-run seeding |
+| `src/migrations.js` + `src/migrations/*.sql` | Ordered SQL schema versions and unversioned-schema compatibility checks |
 | `src/seed.js` | Deterministic fictitious people, operations, and clinical example data |
 | `test/` | Isolated database and in-process HTTP regression tests |
 
@@ -73,11 +74,21 @@ The response includes a total violation count, per-rule counts, and at most thre
 
 The server serves only four explicitly mapped static URLs (`/`, `/styles.css`, `/app.js`, and `/favicon.svg`). CSP, frame restrictions, no-sniff, no-referrer, and no-store headers are supplied. The default binding is `127.0.0.1`; running it on a public interface or with real records is unsupported.
 
+## Schema migrations and query plans
+
+Wardline stores its schema version in SQLite's `PRAGMA user_version`. `src/migrations.js` registers consecutive SQL migrations, starting with `001_initial.sql` (the original 13-table schema) and `002_patient_timeline_indexes.sql`. Each version runs inside a single `BEGIN IMMEDIATE` transaction; the version number is advanced only after its SQL succeeds. On a fresh file, deterministic demo seeding runs inside that same transaction. A failure rolls back the schema, version number, and any partial seed data.
+
+Version-zero databases with existing schema objects are treated as pre-migration installations rather than new databases. Before adopting them, the runner checks all 13 expected tables and their column layouts, then idempotently ensures the original indexes exist and applies subsequent upgrades. This preserves existing records, even if a user deliberately deleted every row. An unrelated or partially formed database is rejected. A file whose schema version exceeds the app's supported version also fails without modification. If upgrading a real local demo file, stop the server and back up the SQLite file before starting the updated app.
+
+The second migration adds `(patient_id, admitted_on, id)` to accelerate patient admission histories (including the `LEAD` return-window analysis), plus `(patient_id, diagnosed_on)` and `(patient_id, performed_on)` for chronological diagnosis and treatment lookups. `test/database.test.js` inspects `EXPLAIN QUERY PLAN` to verify SQLite selects these indexes for bounded patient timeline queries; it avoids fragile wall-clock performance thresholds. Query planner choices and true throughput will vary with data volume and distribution; the small synthetic fixture is not a production benchmark.
+
+To introduce a change, add the next numbered `.sql` file to `src/migrations/`, append its entry to the registry, and add regression tests for both a fresh database and upgrades from older versions. Keep released files immutable: existing installations can already have applied them. SQL migration statements must not contain their own `BEGIN`/`COMMIT` boundaries because the runner manages the transaction.
+
 ## Tradeoffs and future work
 
 - Native SQLite keeps onboarding easy and demo startup self-contained; it currently depends on the experimental Node `node:sqlite` interface and is synchronous.
 - HTML/CSS/JavaScript without framework dependencies makes the project inspectable and lightweight. A larger product could split UI components and add a dedicated integration/browser test suite.
-- The UI is optimized for demonstration data and a single local process. Concurrent users, migrations, identity, permission boundaries, backups, compliance, and auditing have not been implemented.
+- The UI is optimized for demonstration data and a single local process. Concurrent users, identity, permission boundaries, backups, compliance, and persistent audit logging have not been implemented.
 - Dashboard admission trends are calculated in the server's UTC calendar months. Historical seed data and current date can affect the visible trend.
 # Operational SQL reporting
 
@@ -90,4 +101,4 @@ The server serves only four explicitly mapped static URLs (`/`, `/styles.css`, `
 - **Length of stay:** calculated for discharges occurring within the range, using inclusive calendar days from the linked admission. It is `null` if there are no qualifying discharges.
 - **Observed 30-day returns:** `LEAD(admitted_on) OVER (PARTITION BY patient_id ORDER BY admitted_on, id)` locates the next recorded stay within each patient's complete admission history. The query then joins the discharge of the preceding stay and selects discharges in the requested range; applying this range *after* the window function is essential because a return can happen after `to`. A return is counted only if the next recorded admission begins 1–30 calendar days after discharge, irrespective of destination ward. A grouped CTE yields return counts and observed shares by **discharge ward**, and a left join retains wards with no discharges (`return_pct = null`). The sum of ward denominators equals the discharge count in the existing report. This is a retrospective description of recorded data, **not** a risk-adjusted clinical readmission metric: absent future records or incomplete follow-up can undercount subsequent visits, and no reason-for-return classification is made.
 
-New date and physician indexes are installed with `CREATE INDEX IF NOT EXISTS` so existing databases receive them on startup. The project uses a local, synthetic dataset and is intended for portfolio demonstration; reporting queries make no clinical or production performance claim.
+Date and physician indexes are part of the first schema migration; patient timeline indexes are added in the second. Existing unversioned databases are upgraded when opened. The project uses a local, synthetic dataset and is intended for portfolio demonstration; reporting queries make no clinical or production performance claim.

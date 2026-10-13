@@ -1,84 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { legacyColumns, migrations as releasedMigrations } from './migrations.js';
 import { seedDatabase } from './seed.js';
-
-const schema = `
-  PRAGMA foreign_keys = ON;
-  CREATE TABLE IF NOT EXISTS patients (
-    id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
-    date_of_birth TEXT NOT NULL, sex TEXT NOT NULL CHECK (sex IN ('F','M')),
-    contact_no TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS physicians (
-    id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
-    specialty TEXT NOT NULL, contact_no TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS nurses (
-    id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
-    contact_no TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS wards (
-    id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, floor TEXT NOT NULL,
-    category TEXT NOT NULL, capacity INTEGER NOT NULL CHECK (capacity > 0)
-  );
-  CREATE TABLE IF NOT EXISTS illnesses (
-    id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, category TEXT NOT NULL,
-    description TEXT
-  );
-  CREATE TABLE IF NOT EXISTS medicines (
-    id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, category TEXT NOT NULL,
-    unit TEXT NOT NULL, stock_qty INTEGER NOT NULL CHECK (stock_qty >= 0),
-    reorder_level INTEGER NOT NULL CHECK (reorder_level >= 0)
-  );
-  CREATE TABLE IF NOT EXISTS admissions (
-    id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE RESTRICT,
-    ward_id INTEGER NOT NULL REFERENCES wards(id) ON DELETE RESTRICT,
-    admitted_on TEXT NOT NULL, reason TEXT
-  );
-  CREATE TABLE IF NOT EXISTS discharges (
-    id INTEGER PRIMARY KEY, admission_id INTEGER NOT NULL UNIQUE REFERENCES admissions(id) ON DELETE RESTRICT,
-    discharged_on TEXT NOT NULL, disposition TEXT NOT NULL, notes TEXT
-  );
-  CREATE TABLE IF NOT EXISTS diagnoses (
-    id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE RESTRICT,
-    physician_id INTEGER NOT NULL REFERENCES physicians(id) ON DELETE RESTRICT,
-    illness_id INTEGER NOT NULL REFERENCES illnesses(id) ON DELETE RESTRICT,
-    diagnosed_on TEXT NOT NULL, notes TEXT
-  );
-  CREATE TABLE IF NOT EXISTS treatments (
-    id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE RESTRICT,
-    diagnosis_id INTEGER REFERENCES diagnoses(id) ON DELETE RESTRICT,
-    physician_id INTEGER REFERENCES physicians(id) ON DELETE RESTRICT,
-    nurse_id INTEGER REFERENCES nurses(id) ON DELETE RESTRICT,
-    medicine_id INTEGER REFERENCES medicines(id) ON DELETE RESTRICT,
-    performed_on TEXT NOT NULL, procedure_name TEXT NOT NULL, notes TEXT
-  );
-  CREATE TABLE IF NOT EXISTS nurse_assignments (
-    id INTEGER PRIMARY KEY, nurse_id INTEGER NOT NULL REFERENCES nurses(id) ON DELETE RESTRICT,
-    patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE RESTRICT,
-    assigned_on TEXT NOT NULL, ends_on TEXT
-  );
-  CREATE TABLE IF NOT EXISTS physician_schedules (
-    id INTEGER PRIMARY KEY, physician_id INTEGER NOT NULL REFERENCES physicians(id) ON DELETE RESTRICT,
-    weekday TEXT NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
-    UNIQUE(physician_id, weekday)
-  );
-  CREATE TABLE IF NOT EXISTS nurse_shifts (
-    id INTEGER PRIMARY KEY, nurse_id INTEGER NOT NULL REFERENCES nurses(id) ON DELETE RESTRICT,
-    weekday TEXT NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,
-    UNIQUE(nurse_id, weekday)
-  );
-  CREATE INDEX IF NOT EXISTS idx_admissions_patient ON admissions(patient_id);
-  CREATE INDEX IF NOT EXISTS idx_admissions_date ON admissions(admitted_on);
-  CREATE INDEX IF NOT EXISTS idx_discharges_admission ON discharges(admission_id);
-  CREATE INDEX IF NOT EXISTS idx_diagnoses_patient ON diagnoses(patient_id);
-  CREATE INDEX IF NOT EXISTS idx_treatments_date ON treatments(performed_on);
-  CREATE INDEX IF NOT EXISTS idx_admissions_ward_date ON admissions(ward_id, admitted_on);
-  CREATE INDEX IF NOT EXISTS idx_discharges_date ON discharges(discharged_on);
-  CREATE INDEX IF NOT EXISTS idx_diagnoses_physician_date ON diagnoses(physician_id, diagnosed_on);
-  CREATE INDEX IF NOT EXISTS idx_treatments_physician_date ON treatments(physician_id, performed_on);
-`;
 
 export function transaction(db, action) {
   db.exec('BEGIN IMMEDIATE');
@@ -92,17 +16,71 @@ export function transaction(db, action) {
   }
 }
 
+function verifyLegacySchema(db) {
+  for (const [table, expected] of Object.entries(legacyColumns)) {
+    const actual = db.prepare(`PRAGMA table_info("${table}")`).all().map((column) => column.name);
+    if (actual.join(',') !== expected.join(',')) {
+      throw new Error(`Cannot adopt unversioned database: ${table} does not match the Wardline schema`);
+    }
+  }
+}
+
+/**
+ * Apply ordered SQL upgrades atomically. SQLite's user_version is updated in
+ * the same transaction as the DDL and initial synthetic data.
+ * `migrationPlan` permits testing a failing future migration in isolation.
+ */
+export function migrateDatabase(db, { seed = false, migrationPlan = releasedMigrations } = {}) {
+  for (const [index, migration] of migrationPlan.entries()) {
+    if (migration.version !== index + 1 || typeof migration.sql !== 'string') {
+      throw new Error('Migrations must have consecutive versions beginning with 1');
+    }
+  }
+  if (migrationPlan.length === 0) throw new Error('No migrations registered');
+
+  db.exec('PRAGMA foreign_keys = ON');
+  const version = db.prepare('PRAGMA user_version').get().user_version;
+  const latest = migrationPlan.at(-1).version;
+  if (version > latest) {
+    throw new Error(`Database schema v${version} is newer than supported v${latest}`);
+  }
+
+  // A version-zero Wardline database already has all 13 tables, even if its
+  // user removed every record. Presence of any schema object disqualifies a
+  // database from first-run seeding.
+  const existingObjects = db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type IN ('table', 'view', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'
+  `).all();
+  const isNew = version === 0 && existingObjects.length === 0;
+
+  transaction(db, () => {
+    let applied = version;
+    if (version === 0 && !isNew) {
+      verifyLegacySchema(db);
+      // Restore any missing baseline indexes without modifying existing rows.
+      db.exec(migrationPlan[0].sql);
+      db.exec('PRAGMA user_version = 1');
+      applied = 1;
+    }
+
+    for (const migration of migrationPlan) {
+      if (migration.version <= applied) continue;
+      db.exec(migration.sql);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+
+    if (seed && isNew) seedDatabase(db);
+  });
+
+  return { isNew, version: latest };
+}
+
 export function openDatabase({ file = process.env.HOSPITAL_DB_PATH || 'data/hospital.sqlite', seed = true } = {}) {
   if (file !== ':memory:') mkdirSync(dirname(resolve(file)), { recursive: true });
   const db = new DatabaseSync(file);
   try {
-    // Seed only a new database. Existing demo records can be intentionally
-    // deleted, and an empty patient table must remain empty after a restart.
-    const isNew = !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'patients'").get();
-    db.exec(schema);
-    if (seed && isNew) {
-      transaction(db, () => seedDatabase(db));
-    }
+    migrateDatabase(db, { seed });
     return db;
   } catch (error) {
     db.close();
