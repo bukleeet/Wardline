@@ -426,12 +426,12 @@ function renderQueryLab(lab) {
   const section = element('section', 'query-lab');
   section.setAttribute('aria-labelledby', 'query-lab-title');
   const intro = element('div', 'query-lab-intro');
-  const title = element('h2', '', 'Read the query. Inspect the plan.');
+  const title = element('h2', '', 'From SQL to evidence.');
   title.id = 'query-lab-title';
   intro.append(element('span', 'eyebrow', 'UNDER THE HOOD / 02'), title,
-    element('p', '', 'A transparent look at real SQLite query plans for fixed, parameterized SQL. Two statements are the exact queries powering the reports on this page.'));
+    element('p', '', 'Explore the SQL, its live SQLite access plan, and five result rows from the same bound inputs. Two statements power the reports on this page.'));
   const heading = element('div', 'query-lab-heading');
-  heading.append(intro, element('span', 'query-lab-badge', 'EXPLAIN QUERY PLAN · READ ONLY'));
+  heading.append(intro, element('span', 'query-lab-badge', 'SQL / PLAN / RESULTS · READ ONLY'));
   section.append(heading);
   const list = element('div', 'query-lab-list');
   for (const [index, example] of lab.examples.entries()) {
@@ -463,11 +463,40 @@ function renderQueryLab(lab) {
     output.append(steps);
     columns.append(source, output);
     body.append(columns);
+    const preview = element('section', 'query-lab-preview');
+    preview.setAttribute('aria-label', `Query result preview: ${example.title}`);
+    const previewHeading = element('div', 'query-lab-preview-heading');
+    previewHeading.append(element('span', 'query-lab-preview-label', '03 / EXECUTED RESULT'),
+      element('span', 'query-lab-preview-count', `First ${example.preview.limit} rows · ${example.preview.rows.length} shown`));
+    preview.append(previewHeading);
+    if (example.preview.rows.length) {
+      const scroll = element('div', 'query-lab-result-scroll');
+      const table = element('table', 'query-lab-result-table');
+      table.append(element('caption', 'sr-only', `Sample output for ${example.title}, at most ${example.preview.limit} rows`));
+      const head = element('tr');
+      for (const name of example.preview.columns) {
+        const th = element('th', '', name.replaceAll('_', ' ')); th.scope = 'col'; head.append(th);
+      }
+      const thead = element('thead'); thead.append(head); table.append(thead);
+      const tbody = element('tbody');
+      for (const row of example.preview.rows) {
+        const tr = element('tr');
+        for (const name of example.preview.columns) {
+          const value = row[name];
+          tr.append(element('td', value === null ? 'query-lab-null' : '', value === null ? 'NULL' : String(value)));
+        }
+        tbody.append(tr);
+      }
+      table.append(tbody); scroll.append(table); preview.append(scroll);
+    } else {
+      preview.append(element('p', 'query-lab-preview-empty', 'No matching rows for these bound inputs.'));
+    }
+    body.append(preview);
     item.append(body);
     list.append(item);
   }
   section.append(list, element('p', 'query-lab-footnote',
-    'Plans describe SQLite’s estimated access paths for the current schema and dataset; they are not timing benchmarks. Planner choices can change as data and statistics change.'));
+    'Fixed, read-only SQL is executed only with server-defined bindings. Previews are limited to five rows inside SQLite. Plans show estimated access paths, not timing benchmarks; choices can change with schema and data.'));
   return section;
 }
 

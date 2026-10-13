@@ -461,6 +461,95 @@
   border-bottom: 1px solid #dae8dd;
 }
 
+.query-lab-preview {
+  overflow: hidden;
+  margin-top: 12px;
+  border: 1px solid #d7e4da;
+  border-radius: 12px;
+  background: #fffefa;
+  box-shadow: 0 12px 32px rgba(19, 58, 45, .035);
+}
+
+.query-lab-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 17px 20px;
+  background: #eaf1e9;
+  border-bottom: 1px solid #d7e4da;
+}
+
+.query-lab-preview-label {
+  color: #20594b;
+  font: 750 10px/1.5 var(--font-ui);
+  letter-spacing: .15em;
+}
+
+.query-lab-preview-count {
+  padding: 5px 10px;
+  border: 1px solid #c6ddcf;
+  border-radius: 100px;
+  background: #f8fcf6;
+  color: #3a6558;
+  font: 600 11px/1.4 var(--font-ui);
+}
+
+.query-lab-result-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.query-lab-result-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.query-lab-result-table th {
+  padding: 14px 20px;
+  background: #f6f8f2;
+  border-bottom: 1px solid #e0e7dd;
+  color: #517064;
+  font: 750 10px/1.4 var(--font-ui);
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.query-lab-result-table td {
+  max-width: 310px;
+  padding: 15px 20px;
+  border-bottom: 1px solid #eef1e9;
+  color: #24483f;
+  font: 12px/1.5 var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.query-lab-result-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.query-lab-result-table tbody tr:hover {
+  background: #f2f8f1;
+}
+
+.query-lab-result-table .query-lab-null {
+  color: #829b8f;
+  font: italic 11px/1.5 Consolas, monospace;
+}
+
+.query-lab-preview-empty {
+  padding: 24px 20px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
 .query-lab-footnote {
   padding: 15px clamp(20px, 3.5vw, 40px);
   margin: 0;
@@ -513,6 +602,13 @@
 }
 
 @media (max-width: 550px) {
+  .query-lab-preview-heading {
+    padding: 14px 16px;
+  }
+  .query-lab-result-table th,
+  .query-lab-result-table td {
+    padding: 13px 15px;
+  }
   .overview-hero {
     padding: 29px 23px;
     border-radius: 17px;
