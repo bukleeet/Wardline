@@ -96,6 +96,20 @@ To assess the SQL work, open **SQL insights -> From SQL to evidence.** The Query
 
 Run `npm run check` before committing. The GitHub Actions workflow repeats these checks on pushes and pull requests. Use conventional commit subjects, such as `feat: add admission dashboard` or `fix: prevent capacity overbooking`.
 
+### Reproducible SQL benchmark
+
+Run the actual operational report and the three SQL Query Lab statements against a larger, **deterministic synthetic dataset**:
+
+```bash
+npm run benchmark:sql
+npm run benchmark:sql -- --patients=8000 --stays=6 --seed=42 --iterations=9
+npm run benchmark:sql -- --patients=8000 --stays=6 --seed=42 --iterations=9 --json
+```
+
+The default fixture contains 4,000 fake patients, 20,000 admissions, 8,000 diagnoses, 8,000 treatments, 24 wards and 120 physicians. All data lives in an isolated in-memory SQLite database and is discarded after each run. Dates, relationships and patient stay sequences are generated from a fixed seed; no hospital data is imported. The report covers January 1–March 31, 2024.
+
+The runner applies the production migrations, fills the fixture in one transaction, executes `ANALYZE`, warms up each query, then reports measured execution times, median, nearest-rank p95, min/max, returned row counts, runtime versions and actual `EXPLAIN QUERY PLAN` steps. The composite operational report is timed end-to-end; its constituent statements live in `src/reports.js`. SQL query plans are emitted for the three independently benchmarked Query Lab statements. This is a repeatable local experiment, not evidence of production throughput. Compare identical seed, shape and environment when discussing results.
+
 ## Where the original assignment lives
 
 The repository also retains the original Java Swing/MySQL coursework in `DBApplication/` and the top-level SQL scripts as historical reference. Wardline is a separate, modern implementation of the same broad domain and does **not** migrate or depend on the legacy database. The source files in `src/`, `public/`, `test/`, and `docs/` are the active application.
