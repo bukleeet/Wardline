@@ -46,6 +46,19 @@ The second migration adds `idx_admissions_patient_date_id` on `(patient_id, admi
 
 The windowed aggregate queries have broader work to do, including scans, joins, temporary sorting, and materialized intermediary results depending on SQLite's planner choices. Adding indexes to every column would increase storage and write costs and is not automatically an improvement. A proper performance experiment would increase synthetic data size, check distributions with `ANALYZE`, compare query plans, run repeatable warm/cold timing tests, and inspect writes and memory under a stated workload. The small deterministic seed is useful for correctness and explainability, but no production speed-up is claimed.
 
+## Reproducible performance experiment
+
+```bash
+npm run benchmark:sql
+npm run benchmark:sql -- --patients=8000 --stays=6 --seed=42 --iterations=9 --json
+```
+
+The opt-in benchmark (`scripts/benchmark-sql.mjs`) applies the real migrations to a disposable in-memory SQLite database. A seeded pseudo-random generator inserts valid foreign-key relationships and nonoverlapping per-patient admission histories alongside diagnoses and treatments. It records the exact row counts, Node/SQLite versions, date range, seed, warm-up count and timed iterations. After `ANALYZE`, it executes the **actual** production physician-workload and recorded-return SQL strings, the live Query Lab clinical timeline statement, and the composite `operationsReport` function. The three individual statements also produce `EXPLAIN QUERY PLAN` nodes and details; the composite report has multiple queries, so it has no single plan.
+
+The benchmark uses repeated wall-clock observations via `performance.now()` with median and nearest-rank p95; all rows are materialized for each timed query, and statements for the three single-query workloads are prepared outside their timed runs. The composite report times its normal query preparation and all SQL statements, so its numbers are **not directly comparable** to single-query timings. It includes no network or browser rendering time. Output row counts are checked for stability across measured iterations. The small benchmark CLI smoke test in `test/benchmark-sql.test.js` verifies data counts, query selection, explain output and invalid-argument rejection; it does not test performance thresholds.
+
+Query plans and timings can change with SQLite/Node versions, hardware, OS caches, workload distribution, and parameter values. Run the command on the same machine with identical flags for useful comparisons, record the raw samples, and avoid claiming a speed-up without a controlled comparison. The generator intentionally models a synthetic load profile rather than a real hospital's occupancy or case mix. This experiment demonstrates query inspection and measurement technique, not production scale or clinical relevance.
+
 ## Schema evolution and safety
 
 `src/migrations.js` runs ordered SQL files inside `BEGIN IMMEDIATE`, advancing `PRAGMA user_version` only after an upgrade succeeds. Initial seeding occurs within the fresh-database transaction. The runner recognizes valid unversioned Wardline databases, including empty ones, and refuses incompatible or newer schemas without writing changes. Released migrations are immutable: new schema changes require a new numbered SQL file and tests for both fresh installs and upgrades. `test/database.test.js` covers persistence, rollback, and index selection.
