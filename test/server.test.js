@@ -131,6 +131,20 @@ test('operations report serves SQL analytics and validates date parameters over 
   }
 });
 
+test('read-only integrity endpoint reports complete database checks over HTTP', async () => {
+  const response = await request('GET', '/api/reports/integrity');
+  assert.equal(response.status, 200);
+  const audit = response.json();
+  assert.equal(audit.checked, 7);
+  assert.equal(audit.total, 0);
+  assert.equal(audit.checks.length, 7);
+  db.exec(`UPDATE physician_schedules SET ends_at = starts_at WHERE id =
+    (SELECT MIN(id) FROM physician_schedules)`);
+  const altered = (await request('GET', '/api/reports/integrity')).json();
+  assert.equal(altered.total, 1);
+  assert.equal(altered.checks.find(({ code }) => code === 'physician_hours').count, 1);
+});
+
 test('filters relation lookups and validates their search parameters', async () => {
   const patient = (await request('GET', '/api/lookup/patients?search=amara')).json();
   assert.equal(patient.length, 1);

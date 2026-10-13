@@ -14,6 +14,7 @@ Wardline is a dependency-free demonstration web application. A Node.js HTTP hand
 | `src/catalog.js` | Whitelisted resources, labels, field types, constraints, relation destinations |
 | `src/repository.js` | Parameterized CRUD/search SQL, transactions, validation, cross-record rules, dashboard queries |
 | `src/reports.js` | Parameterized, date-bounded operational SQL analytics with CTEs and window functions |
+| `src/integrity.js` | Read-only SQL checks for seven cross-record data integrity rules, with bounded examples |
 | `src/database.js` | SQLite schema, foreign keys, indexes, first-run initialization |
 | `src/seed.js` | Deterministic fictitious people, operations, and clinical example data |
 | `test/` | Isolated database and in-process HTTP regression tests |
@@ -51,6 +52,14 @@ There are 13 editable resources: patients, physicians, nurses, wards, illnesses 
 6. Foreign-key restrictions prevent deletion of records referenced elsewhere. Repository writes are wrapped in transactions, and whitelisted field names and bound values prevent SQL string injection.
 
 These checks are application-layer rules backed by SQLite constraints. Directly modifying the database outside the application can bypass application-layer checks.
+
+### Independent SQL integrity audit
+
+`GET /api/reports/integrity` runs seven **read-only**, database-wide diagnostics in `src/integrity.js`, independent of the operational report's date filters. They detect overlapping admissions for the same patient, active ward occupancy above capacity, discharges dated before admissions, treatment/diagnosis patient mismatches, reversed nurse assignment dates, and invalid physician schedule or nurse shift times. These checks are intended to reveal inconsistent records inserted outside the application's usual write paths.
+
+The overlap query partitions stays by patient, orders them chronologically, and compares the current start with the **running maximum** of all previous end dates. A running maximum is needed: comparing only with `LAG` of the immediately preceding end date can miss overlaps when an earlier stay completely contains a more recent stay. Date-only stay intervals are inclusive, so same-day discharge/re-admission also counts as an overlap.
+
+The response includes a total violation count, per-rule counts, and at most three sample IDs/details for each rule. SQL window functions enforce the sample bound; the endpoint neither edits records nor repairs violations. This is a targeted invariant audit rather than exhaustive data validation, and a zero count does not guarantee that all possible relations are correct. `test/integrity.test.js` uses both clean databases and deliberately inconsistent raw-SQL fixtures to validate the diagnostics.
 
 ## HTTP contract
 

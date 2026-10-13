@@ -237,10 +237,13 @@ async function render() {
       if (sequence === loadSequence) renderDashboard(data);
     } catch (error) { if (sequence === loadSequence) renderError(error.message); }
   } else if (resource === 'reports') {
-    main.replaceChildren(element('div', 'loading', 'Calculating operational insights…'));
+    main.replaceChildren(element('div', 'loading', 'Calculating operational insights and checking integrity…'));
     try {
-      const data = await api(`reports/operations?${new URLSearchParams(reportRange)}`);
-      if (sequence === loadSequence) renderReport(data);
+      const [data, integrity] = await Promise.all([
+        api(`reports/operations?${new URLSearchParams(reportRange)}`),
+        api('reports/integrity'),
+      ]);
+      if (sequence === loadSequence) renderReport(data, integrity);
     } catch (error) { if (sequence === loadSequence) renderError(error.message); }
   } else {
     main.replaceChildren(element('div', 'loading', 'Loading records…'));
@@ -251,7 +254,7 @@ async function render() {
   }
 }
 
-function renderReport(data) {
+function renderReport(data, integrity) {
   const shell = element('div', 'insights-page');
   const header = pageHeader('DATABASE INTELLIGENCE / 01', 'Operational insights',
     'A precise view of capacity, patient flow, and clinical workload. Every number comes from live relational queries.');
@@ -316,6 +319,7 @@ function renderReport(data) {
     cards.append(card);
   }
   shell.append(cards);
+  shell.append(renderIntegrity(integrity));
   const panels = element('div', 'insight-panels');
   const wardPanel = element('section', 'insight-panel');
   wardPanel.append(panelHeading('Capacity by ward', 'Utilization, daily peak census, and days at the limit'));
@@ -414,6 +418,50 @@ function renderReport(data) {
   flowTable.append(flowBody); flowTableWrap.append(flowTable); flow.append(flowTableWrap); shell.append(flow);
   shell.append(element('p', 'insight-note', 'Synthetic demonstration data. Occupancy counts admission and discharge dates. Capacity pressure compares each historical day against the ward’s current capacity. Net flow is cumulative change within the selected range.'));
   main.replaceChildren(shell);
+}
+
+function renderIntegrity(integrity) {
+  const audit = element('section', 'integrity-section');
+  audit.setAttribute('aria-labelledby', 'integrity-heading');
+  const heading = element('div', 'integrity-heading');
+  const introduction = element('div', 'integrity-intro');
+  introduction.append(element('span', 'eyebrow', 'DATABASE HEALTH / 02'));
+  const title = element('h2', '', 'Integrity, by design.');
+  title.id = 'integrity-heading';
+  introduction.append(title, element('p', '',
+    'Seven live SQL checks inspect the entire relational database, including changes made outside the app. ' +
+    'This audit is independent of the date range above.'));
+  const status = element('div', `integrity-score${integrity.total ? ' alert' : ''}`);
+  status.setAttribute('role', 'status');
+  status.append(element('span', 'integrity-score-label', integrity.total ? 'REQUIRES REVIEW' : 'ALL CHECKS CLEAR'),
+    element('strong', '', integrity.total),
+    element('small', '', `${integrity.total === 1 ? 'finding' : 'findings'} across ${integrity.checked} rules`));
+  heading.append(introduction, status);
+  audit.append(heading);
+
+  const checks = element('div', 'integrity-grid');
+  integrity.checks.forEach((check, index) => {
+    const item = element('article', `integrity-rule${check.count ? ' needs-review' : ''}`);
+    const top = element('div', 'integrity-rule-top');
+    top.append(element('span', 'integrity-rule-index', String(index + 1).padStart(2, '0')),
+      element('span', 'integrity-rule-status', check.count ? `${check.count} ${check.count === 1 ? 'issue' : 'issues'}` : 'Passed'));
+    item.append(top, element('h3', '', check.label));
+    if (check.count) {
+      const details = element('details', 'integrity-examples');
+      details.append(element('summary', '', `Inspect ${check.examples.length} ${check.examples.length === 1 ? 'example' : 'examples'}`));
+      const examples = element('ul');
+      for (const example of check.examples) examples.append(element('li', '', example.detail));
+      details.append(examples);
+      item.append(details);
+    } else {
+      item.append(element('p', 'integrity-rule-empty', 'No violations found'));
+    }
+    checks.append(item);
+  });
+  audit.append(checks, element('p', 'integrity-footnote',
+    'Read-only audit · SQL window functions and conditional joins · Up to three sample records per rule. ' +
+    'Checks cover seven defined domain invariants and are not an exhaustive validation of the database.'));
+  return audit;
 }
 
 function renderDashboard(data) {

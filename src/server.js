@@ -6,6 +6,7 @@ import { openDatabase } from './database.js';
 import { publicCatalog } from './catalog.js';
 import { exportCsv } from './export.js';
 import { operationsReport } from './reports.js';
+import { integrityReport } from './integrity.js';
 import { AppError, createRecord, dashboard, deleteRecord, getRecord, listRecords, lookup, updateRecord } from './repository.js';
 
 const publicPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -87,6 +88,7 @@ export function createServer({ db = openDatabase() } = {}) {
         if (req.method === 'GET' && path === '/api/reports/operations') return respond(res, 200, operationsReport(db, {
           from: url.searchParams.get('from'), to: url.searchParams.get('to'),
         }));
+        if (req.method === 'GET' && path === '/api/reports/integrity') return respond(res, 200, integrityReport(db));
 
         const exported = path.match(/^\/api\/export\/([a-z_]+)$/);
         if (req.method === 'GET' && exported) return respondCsv(res, exported[1], exportCsv(db, exported[1], {

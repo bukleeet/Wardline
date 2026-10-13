@@ -13,7 +13,7 @@ Wardline reimagines an academic hospital database assignment as a local-first we
 - **Record management:** create, browse, search, edit, and remove records across 13 resources, including patients, staff, conditions, medicines, admissions, diagnoses, and treatments.
 - **Linked data:** searchable relationship pickers (name or exact `#ID`) and readable relation labels in tables, including historical records outside the initial option list.
 - **Filtered CSV exports:** download all records matching the current section search, with readable linked-record labels and spreadsheet formula escaping (up to 5,000 records).
-- **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, nonoverlapping admission histories, admission/discharge chronology, and treatment-to-diagnosis consistency.
+- **Data integrity:** foreign keys, transactions, input validation, ward capacity checks, nonoverlapping admission histories, admission/discharge chronology, and treatment-to-diagnosis consistency. A separate **SQL integrity audit** checks seven cross-record invariants even when database edits bypass the application.
 - **Responsive navigation:** desktop sidebar, compact mobile navigation, keyboard shortcut (`/`) for patient search, skip-to-content link, labeled data tables, accessible dialogs, and empty/error states.
 
 ### Quick start
@@ -67,6 +67,7 @@ See [Architecture and domain rules](docs/architecture.md) for the resource map, 
 | `GET` | `/api/catalog` | Resource and field metadata |
 | `GET` | `/api/dashboard` | Aggregate dashboard metrics |
 | `GET` | `/api/reports/operations?from=2026-09-01&to=2026-09-30` | Operational SQL report (inclusive range, at most 366 days) |
+| `GET` | `/api/reports/integrity` | Read-only relational integrity audit across the entire database |
 | `GET` | `/api/records/patients?search=amara&page=1&pageSize=10` | Search/paginate patient records |
 | `GET` | `/api/records/patients/1` | Read one record |
 | `GET` | `/api/lookup/wards?search=critical` | Search ward options for forms (100 results maximum) |
@@ -82,6 +83,8 @@ The API accepts JSON for `POST` and `PATCH` and returns JSON responses. Invalid 
 Tests use Node's built-in test runner and fresh, in-memory SQLite databases. They cover seeded consistency, search and pagination, CRUD, validation, foreign-key behavior, bed capacity, clinical and scheduling rules, dashboard aggregation, and HTTP request handling. HTTP tests invoke the real request listener without opening a socket, which also works in restricted CI environments.
 
 The SQL reporting fixtures also check occupied-bed-day overlap across date boundaries, inclusive discharge dates, date-complete daily census, carried admissions, peak ward census, capacity pressure, 30-day return boundaries, next stays outside the report window, empty wards, length of stay, workload join fanout, leap days, and range validation. Independently computed ward census bed-days are reconciled with interval-based occupied bed-days. The report is a concrete example of nontrivial relational analytics beyond basic CRUD.
+
+The integrity audit independently queries the underlying tables for overlapping stays, over-capacity wards, invalid discharge chronology, mismatched treatment/diagnosis patients, inverted nurse-assignment dates, and invalid physician or nurse shift times. It returns counts and up to three example records per rule. Its interval-overlap check uses an ordered running maximum to catch nested historical stays. The audit is **read-only**, runs over the **entire database** regardless of the selected insights date range, and diagnoses only its seven named rules; a clean result is not proof of all possible data correctness. Tests inject direct SQL anomalies that bypass application validation and verify that the audit catches them without modifying records.
 
 Run `npm run check` before committing. The GitHub Actions workflow repeats these checks on pushes and pull requests. Use conventional commit subjects, such as `feat: add admission dashboard` or `fix: prevent capacity overbooking`.
 
