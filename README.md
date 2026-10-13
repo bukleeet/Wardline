@@ -9,7 +9,7 @@ Wardline reimagines an academic hospital database assignment as a local-first we
 ## Explore the app
 
 - **Overview:** live admission totals, patient counts, bed occupancy, six-month admissions trend, ward utilization, medication reorder alerts, and recent admissions.
-- **SQL insights:** choose a date range to inspect daily census and net patient flow, inclusive occupied bed-days, ranked ward utilization, average discharged length of stay, and physician workload. Computed on demand by parameterized SQL with CTEs and window functions.
+- **SQL insights:** choose a date range to inspect daily census and net patient flow, inclusive occupied bed-days, ranked ward utilization, peak ward census, days at or above capacity, average discharged length of stay, and physician workload. Computed on demand by parameterized SQL with recursive CTEs, event-stream aggregation, and window functions.
 - **Record management:** create, browse, search, edit, and remove records across 13 resources, including patients, staff, conditions, medicines, admissions, diagnoses, and treatments.
 - **Linked data:** searchable relationship pickers (name or exact `#ID`) and readable relation labels in tables, including historical records outside the initial option list.
 - **Filtered CSV exports:** download all records matching the current section search, with readable linked-record labels and spreadsheet formula escaping (up to 5,000 records).
@@ -81,7 +81,7 @@ The API accepts JSON for `POST` and `PATCH` and returns JSON responses. Invalid 
 
 Tests use Node's built-in test runner and fresh, in-memory SQLite databases. They cover seeded consistency, search and pagination, CRUD, validation, foreign-key behavior, bed capacity, clinical and scheduling rules, dashboard aggregation, and HTTP request handling. HTTP tests invoke the real request listener without opening a socket, which also works in restricted CI environments.
 
-The SQL reporting fixtures also check occupied-bed-day overlap across the date boundaries, inclusive discharge dates, date-complete daily census, empty wards, length of stay, workload join fanout, leap days, and range validation. The report is a concrete example of nontrivial relational analytics beyond basic CRUD.
+The SQL reporting fixtures also check occupied-bed-day overlap across date boundaries, inclusive discharge dates, date-complete daily census, carried admissions, peak ward census, capacity pressure, empty wards, length of stay, workload join fanout, leap days, and range validation. Independently computed ward census bed-days are reconciled with interval-based occupied bed-days. The report is a concrete example of nontrivial relational analytics beyond basic CRUD.
 
 Run `npm run check` before committing. The GitHub Actions workflow repeats these checks on pushes and pull requests. Use conventional commit subjects, such as `feat: add admission dashboard` or `fix: prevent capacity overbooking`.
 

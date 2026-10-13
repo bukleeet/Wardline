@@ -293,6 +293,7 @@ function renderReport(data) {
     ['01', 'Interval arithmetic', 'Clipped, inclusive bed-days'],
     ['02', 'Analytic windows', 'Ranked utilization and running totals'],
     ['03', 'Independent aggregates', 'No diagnosis × treatment fanout'],
+    ['04', 'Event-stream census', 'Daily peaks and capacity pressure'],
   ]) {
     const note = element('div', 'report-query-note');
     note.append(element('span', '', number), element('strong', '', title), element('small', '', detail));
@@ -300,11 +301,13 @@ function renderReport(data) {
   }
   shell.append(queryNotes);
   const cards = element('div', 'insight-metrics');
+  const pressuredWards = data.wards.filter((ward) => ward.days_at_capacity > 0).length;
   const metrics = [
     ['Admissions', data.summary.admissions, 'Started within window'],
     ['Discharges', data.summary.discharges, 'Completed within window'],
     ['Bed utilization', data.summary.availableBedDays ? `${(100 * data.summary.occupiedBedDays / data.summary.availableBedDays).toFixed(1)}%` : '—', 'Occupied / available bed-days'],
     ['Average stay', data.summary.avgStayDays === null ? '—' : `${data.summary.avgStayDays} days`, 'Discharged patients'],
+    ['Capacity pressure', `${pressuredWards} / ${data.wards.length}`, 'Wards reaching capacity during the range'],
   ];
   for (const [label, value, detail] of metrics) {
     const card = element('article', 'insight-metric');
@@ -314,7 +317,7 @@ function renderReport(data) {
   shell.append(cards);
   const panels = element('div', 'insight-panels');
   const wardPanel = element('section', 'insight-panel');
-  wardPanel.append(panelHeading('Capacity by ward', 'Inclusive bed-days over the selected period'));
+  wardPanel.append(panelHeading('Capacity by ward', 'Utilization, daily peak census, and days at the limit'));
   for (const ward of data.wards) {
     const row = element('div', 'ward-insight');
     const header = element('div', 'ward-insight-label');
@@ -328,7 +331,19 @@ function renderReport(data) {
     track.setAttribute('aria-valuetext', `${ward.utilization_pct}% utilization`);
     const bar = element('div', 'insight-bar');
     bar.style.width = `${Math.min(100, Math.max(0, ward.utilization_pct))}%`;
-    track.append(bar); row.append(header, track); wardPanel.append(row);
+    const details = element('div', 'ward-insight-details');
+    details.append(element('span', 'ward-peak', ward.peak_census
+      ? `Peak ${ward.peak_census} / ${ward.capacity} beds · ${shortDate(ward.peak_day)}`
+      : 'No occupied beds in this range'));
+    const pressure = ward.days_over_capacity > 0
+      ? `${ward.days_over_capacity} over limit · ${ward.days_at_capacity} at/above limit`
+      : ward.days_at_capacity > 0
+        ? `${ward.days_at_capacity} ${ward.days_at_capacity === 1 ? 'day' : 'days'} at capacity`
+        : 'Below capacity throughout';
+    const pressureState = ward.days_over_capacity > 0 ? 'over'
+      : ward.days_at_capacity > 0 ? 'at' : 'clear';
+    details.append(element('span', `ward-pressure ${pressureState}`, pressure));
+    track.append(bar); row.append(header, track, details); wardPanel.append(row);
   }
   const workloadPanel = element('section', 'insight-panel');
   workloadPanel.append(panelHeading('Physician workload', 'Separate aggregates prevent duplicate counts'));
@@ -369,7 +384,7 @@ function renderReport(data) {
     flowBody.append(tr);
   }
   flowTable.append(flowBody); flowTableWrap.append(flowTable); flow.append(flowTableWrap); shell.append(flow);
-  shell.append(element('p', 'insight-note', 'Synthetic demonstration data. Occupancy counts admission and discharge dates. Net flow is cumulative change within the selected range.'));
+  shell.append(element('p', 'insight-note', 'Synthetic demonstration data. Occupancy counts admission and discharge dates. Capacity pressure compares each historical day against the ward’s current capacity. Net flow is cumulative change within the selected range.'));
   main.replaceChildren(shell);
 }
 

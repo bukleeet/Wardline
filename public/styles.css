@@ -1721,7 +1721,7 @@ dialog::backdrop {
 
 .report-query-notes {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   background: #c6d9d7;
@@ -1758,7 +1758,7 @@ dialog::backdrop {
 
 .insight-metrics {
   display: grid;
-  grid-template-columns: repeat(4,minmax(0,1fr));
+  grid-template-columns: repeat(5,minmax(0,1fr));
   gap: 14px;
 }
 
@@ -1842,6 +1842,45 @@ dialog::backdrop {
   color: var(--ink-soft);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.ward-insight-details {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.ward-peak {
+  color: var(--ink-soft);
+}
+
+.ward-pressure {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border: 1px solid #d5eae4;
+  border-radius: 999px;
+  background: #eff8f4;
+  color: #126b5f;
+  font-weight: 720;
+}
+
+.ward-pressure.at {
+  background: #fff6e8;
+  border-color: #f2d6a4;
+  color: #835419;
+}
+
+.ward-pressure.over {
+  background: #fff0ed;
+  border-color: #efc1b7;
+  color: #a43d31;
 }
 
 .insight-track {
@@ -1949,7 +1988,7 @@ dialog::backdrop {
 
 @media(max-width:1200px) {
   .insight-metrics {
-    grid-template-columns: repeat(2,minmax(0,1fr));
+    grid-template-columns: repeat(3,minmax(0,1fr));
   }
   .insight-panels {
     grid-template-columns: minmax(0,1fr);
@@ -1974,7 +2013,7 @@ dialog::backdrop {
     text-align: right;
   }
   .report-query-notes {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2,minmax(0,1fr));
   }
 }
 
@@ -1992,6 +2031,12 @@ dialog::backdrop {
   .insight-metrics {
     grid-template-columns: 1fr 1fr;
     gap: 9px;
+  }
+  .insight-metric:last-child {
+    grid-column: 1 / -1;
+  }
+  .report-query-notes {
+    grid-template-columns: 1fr;
   }
   .insight-metric {
     padding: 17px;

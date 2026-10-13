@@ -105,6 +105,14 @@ test('operations report serves SQL analytics and validates date parameters over 
   assert.ok(Array.isArray(report.physicians));
   assert.equal(report.summary.availableBedDays,
     report.wards.reduce((sum, ward) => sum + ward.capacity * 3, 0));
+  assert.equal(report.summary.occupiedBedDays,
+    report.wards.reduce((sum, ward) => sum + ward.census_bed_days, 0));
+  for (const ward of report.wards) {
+    assert.equal(typeof ward.peak_census, 'number');
+    assert.match(ward.peak_day, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(typeof ward.days_at_capacity, 'number');
+    assert.equal(typeof ward.days_over_capacity, 'number');
+  }
 
   for (const query of [
     '', '?from=2026-01-01', '?to=2026-01-01',
