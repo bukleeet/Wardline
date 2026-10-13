@@ -4,15 +4,36 @@ import { PHYSICIAN_WORKLOAD_SQL, RECORDED_RETURNS_SQL, reportWindow } from './re
 const EXAMPLES = Object.freeze([
   {
     id: 'patient-timeline',
-    title: 'Indexed patient timeline',
-    technique: 'Composite timeline index',
-    explanation: 'The (patient_id, admitted_on, id) index supports patient filtering and chronological reads without an extra sort. Fetching ward_id still requires a table lookup.',
-    sql: `SELECT id, ward_id, admitted_on
-FROM admissions
-WHERE patient_id = :patient_id
-ORDER BY admitted_on, id`,
+    title: 'Longitudinal clinical timeline',
+    technique: 'UNION ALL + indexed joins',
+    explanation: 'Three independently indexed patient lookups combine admissions, diagnoses and treatments into a single chronological event stream. UNION ALL preserves multiple events on the same date; source IDs keep their order deterministic.',
+    sql: `SELECT a.admitted_on AS event_date,
+       'Admission' AS event_type,
+       a.id AS event_id,
+       w.name || ' · ' || COALESCE(a.reason, 'Admitted') AS description
+FROM admissions AS a
+JOIN wards AS w ON w.id = a.ward_id
+WHERE a.patient_id = :patient_id
+UNION ALL
+SELECT d.diagnosed_on AS event_date,
+       'Diagnosis' AS event_type,
+       d.id AS event_id,
+       i.name || ' · Dr. ' || p.last_name AS description
+FROM diagnoses AS d
+JOIN illnesses AS i ON i.id = d.illness_id
+JOIN physicians AS p ON p.id = d.physician_id
+WHERE d.patient_id = :patient_id
+UNION ALL
+SELECT t.performed_on AS event_date,
+       'Treatment' AS event_type,
+       t.id AS event_id,
+       t.procedure_name || ' · Dr. ' || p.last_name AS description
+FROM treatments AS t
+JOIN physicians AS p ON p.id = t.physician_id
+WHERE t.patient_id = :patient_id
+ORDER BY event_date DESC, event_type, event_id DESC`,
     parameters: () => ({ patient_id: 1 }),
-    context: 'Representative record lookup using a synthetic patient ID of 1.',
+    context: 'Three clinical resources for synthetic patient #1; preview shows the five newest events.',
   },
   {
     id: 'physician-workload',
@@ -34,7 +55,9 @@ ORDER BY admitted_on, id`,
   },
 ]);
 
-/** Return actual SQLite planner output for curated query paths, without running the data queries. */
+const PREVIEW_LIMIT = 5;
+
+/** Explain and sample curated, parameterized, read-only SQL. Never accept browser-authored SQL. */
 export function queryLab(db, range = {}) {
   const { from, to } = reportWindow(range);
   return {
@@ -44,7 +67,14 @@ export function queryLab(db, range = {}) {
       const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(bindings).map(({ id: node, parent, detail }) => ({
         id: node, parent, detail,
       }));
-      return { id, title, technique, explanation, context, sql: sql.trim().replace(/^ {4}/gm, ''), bindings, plan };
+      // Limit the result inside SQLite; reports can span up to 366 calendar days.
+      const statement = db.prepare(`SELECT * FROM (${sql}) AS result_preview LIMIT ${PREVIEW_LIMIT}`);
+      const rows = statement.all(bindings);
+      return {
+        id, title, technique, explanation, context,
+        sql: sql.trim().replace(/^ {4}/gm, ''), bindings, plan,
+        preview: { limit: PREVIEW_LIMIT, columns: statement.columns().map(({ name }) => name), rows },
+      };
     }),
   };
 }
