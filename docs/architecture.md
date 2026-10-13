@@ -13,6 +13,7 @@ Wardline is a dependency-free demonstration web application. A Node.js HTTP hand
 | `src/export.js` | Bounded CSV downloads with full form fields, relation labels, and formula escaping |
 | `src/catalog.js` | Whitelisted resources, labels, field types, constraints, relation destinations |
 | `src/repository.js` | Parameterized CRUD/search SQL, transactions, validation, cross-record rules, dashboard queries |
+| `src/reports.js` | Parameterized, date-bounded operational SQL analytics with CTEs and window functions |
 | `src/database.js` | SQLite schema, foreign keys, indexes, first-run initialization |
 | `src/seed.js` | Deterministic fictitious people, operations, and clinical example data |
 | `test/` | Isolated database and in-process HTTP regression tests |
@@ -69,3 +70,13 @@ The server serves only four explicitly mapped static URLs (`/`, `/styles.css`, `
 - HTML/CSS/JavaScript without framework dependencies makes the project inspectable and lightweight. A larger product could split UI components and add a dedicated integration/browser test suite.
 - The UI is optimized for demonstration data and a single local process. Concurrent users, migrations, identity, permission boundaries, backups, compliance, and auditing have not been implemented.
 - Dashboard admission trends are calculated in the server's UTC calendar months. Historical seed data and current date can affect the visible trend.
+# Operational SQL reporting
+
+`GET /api/reports/operations?from=YYYY-MM-DD&to=YYYY-MM-DD` calculates a report over an **inclusive** UTC calendar-date range of 1–366 days. The server validates exact ISO calendar dates and chronological order; SQL binds both dates as parameters. `src/reports.js` contains the queries and `test/reports.test.js` has deterministic relational fixtures.
+
+- **Ward utilization:** a left join from admissions to the unique discharge row creates intervals. An interval intersects the report if the admission started on/before `to` and its discharge is absent or on/after `from`. Clipping both ends with `MAX`/`MIN` gives inclusive *occupied bed-days*. A separate `occupied` CTE aggregates before joining all wards, preserving empty wards. `DENSE_RANK` ranks occupancy normalized by each ward's capacity. Available bed-days are capacity × report days. A stay counts on both admission and discharge dates.
+- **Daily flow:** a recursive calendar CTE generates every date, including days with zero events. Separate admission and discharge aggregations prevent multiplicative joins. An opening-census aggregate counts patients already admitted at the start of the period. `LAG` shifts the discharge event by one day, then a windowed `SUM` adds admissions and subtracts prior-day discharges to derive the **inclusive daily census**. This avoids joining every admission to every generated date. A second windowed `SUM` computes **within-window** cumulative net admissions minus discharges, intentionally distinct from absolute census because patients present before `from` contribute to census.
+- **Physician activity:** diagnoses and treatments are grouped by physician independently and only then joined to physician records. This avoids the classic `diagnoses × treatments` fanout. `COUNT(DISTINCT patient_id)` counts unique patients with physician-performed treatments, and `RANK` provides workload ordering. Unassigned treatments are excluded from individual physician workload.
+- **Length of stay:** calculated for discharges occurring within the range, using inclusive calendar days from the linked admission. It is `null` if there are no qualifying discharges.
+
+New date and physician indexes are installed with `CREATE INDEX IF NOT EXISTS` so existing databases receive them on startup. The project uses a local, synthetic dataset and is intended for portfolio demonstration; reporting queries make no clinical or production performance claim.

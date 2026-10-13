@@ -74,6 +74,10 @@ const schema = `
   CREATE INDEX IF NOT EXISTS idx_discharges_admission ON discharges(admission_id);
   CREATE INDEX IF NOT EXISTS idx_diagnoses_patient ON diagnoses(patient_id);
   CREATE INDEX IF NOT EXISTS idx_treatments_date ON treatments(performed_on);
+  CREATE INDEX IF NOT EXISTS idx_admissions_ward_date ON admissions(ward_id, admitted_on);
+  CREATE INDEX IF NOT EXISTS idx_discharges_date ON discharges(discharged_on);
+  CREATE INDEX IF NOT EXISTS idx_diagnoses_physician_date ON diagnoses(physician_id, diagnosed_on);
+  CREATE INDEX IF NOT EXISTS idx_treatments_physician_date ON treatments(physician_id, performed_on);
 `;
 
 export function transaction(db, action) {

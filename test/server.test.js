@@ -95,6 +95,29 @@ test('lists resources, filters records, and returns dashboard data', async () =>
   assert.match((await request('GET', '/api/lookup/diagnoses')).json()[0].label, /^Diagnosis #\d+ · .+ · .+/);
 });
 
+test('operations report serves SQL analytics and validates date parameters over HTTP', async () => {
+  const response = await request('GET', '/api/reports/operations?from=2026-01-01&to=2026-01-03');
+  assert.equal(response.status, 200);
+  const report = response.json();
+  assert.equal(report.days, 3);
+  assert.equal(report.daily.length, 3);
+  assert.ok(Array.isArray(report.wards));
+  assert.ok(Array.isArray(report.physicians));
+  assert.equal(report.summary.availableBedDays,
+    report.wards.reduce((sum, ward) => sum + ward.capacity * 3, 0));
+
+  for (const query of [
+    '', '?from=2026-01-01', '?to=2026-01-01',
+    '?from=2026-03-05&to=2026-03-04',
+    '?from=2026-01-01&to=2027-01-02',
+    '?from=2026-02-29&to=2026-03-01',
+  ]) {
+    const error = await request('GET', `/api/reports/operations${query}`);
+    assert.equal(error.status, 400, query);
+    assert.equal(typeof error.json().error, 'string');
+  }
+});
+
 test('filters relation lookups and validates their search parameters', async () => {
   const patient = (await request('GET', '/api/lookup/patients?search=amara')).json();
   assert.equal(patient.length, 1);

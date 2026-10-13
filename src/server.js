@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { openDatabase } from './database.js';
 import { publicCatalog } from './catalog.js';
 import { exportCsv } from './export.js';
+import { operationsReport } from './reports.js';
 import { AppError, createRecord, dashboard, deleteRecord, getRecord, listRecords, lookup, updateRecord } from './repository.js';
 
 const publicPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -83,6 +84,9 @@ export function createServer({ db = openDatabase() } = {}) {
         if (req.method === 'GET' && path === '/api/health') return respond(res, 200, { status: 'ok' });
         if (req.method === 'GET' && path === '/api/catalog') return respond(res, 200, publicCatalog());
         if (req.method === 'GET' && path === '/api/dashboard') return respond(res, 200, dashboard(db));
+        if (req.method === 'GET' && path === '/api/reports/operations') return respond(res, 200, operationsReport(db, {
+          from: url.searchParams.get('from'), to: url.searchParams.get('to'),
+        }));
 
         const exported = path.match(/^\/api\/export\/([a-z_]+)$/);
         if (req.method === 'GET' && exported) return respondCsv(res, exported[1], exportCsv(db, exported[1], {
