@@ -5,10 +5,10 @@ Wardline is a practical SQL portfolio project: its operational reports are compu
 ## Start with observable evidence
 
 1. Run `npm start` with Node.js 24+, open **SQL insights**, and choose a date range.
-2. Expand **Read the query. Inspect the plan.** Compare the SQL with the bound values and SQLite `EXPLAIN QUERY PLAN` steps. The workload and recorded-return examples are the exact strings run by the report, exported from `src/reports.js`. The timeline example illustrates the index in migration `002_patient_timeline_indexes.sql`.
+2. Expand **From SQL to evidence.** Compare the SQL with its bound values, SQLite `EXPLAIN QUERY PLAN` steps, and up to five executed result rows. The workload and recorded-return examples are the exact strings run by the report, exported from `src/reports.js`. The timeline example illustrates the indexes in migration `002_patient_timeline_indexes.sql`.
 3. Read `src/reports.js`, `src/integrity.js`, `src/repository.js`, and `src/migrations/*.sql`; then run `npm run check` to exercise real SQLite fixtures and HTTP handlers.
 
-The Query Lab accepts only a date window. **It does not accept submitted SQL**, and it runs `EXPLAIN QUERY PLAN` on three fixed, parameterized statements. Bound values are supplied separately from SQL syntax. Plans describe a chosen access path on this schema and dataset; they do **not** measure elapsed time, memory, or throughput.
+The Query Lab accepts only a date window. **It does not accept submitted SQL**, and it runs `EXPLAIN QUERY PLAN` and a bounded five-row preview on three fixed, parameterized statements. Bound values are supplied separately from SQL syntax. Plans describe a chosen access path on this schema and dataset; they do **not** measure elapsed time, memory, or throughput. Preview rows demonstrate what SQLite returned, not the completeness of a full report.
 
 ## Why the SQL is structured this way
 
@@ -20,6 +20,7 @@ The Query Lab accepts only a date window. **It does not accept submitted SQL**, 
 | Dense daily census needs dates with no admissions or discharges | Build a bounded recursive calendar, aggregate event pulses per day, carry in the opening census, then apply a windowed cumulative sum | Tests cover no-event days, previously admitted patients, leap days, peaks, and capacity thresholds |
 | An earlier long stay can contain a later stay that is not adjacent in discharge order | Compare each start date to a **running maximum** of prior interval ends instead of only `LAG()` | `test/integrity.test.js` injects overlapping historical stays directly in SQLite |
 | Record edits should not leave cross-record contradictions | Use schema constraints, whitelisted resources/fields, prepared statements, and transactions with business-rule validation | `test/repository.test.js` covers conflicting admissions, capacity changes, relations, and chronology |
+| Treatments may have no assigned physician | Unite admissions, diagnoses, and treatments with `UNION ALL`; use a `LEFT JOIN` for the optional treatment physician so valid events are never silently dropped | `test/clinical-timeline.test.js` checks unassigned treatments, patient isolation, and read-only previews |
 
 ### A join fanout example
 
@@ -35,7 +36,7 @@ This model stores dates without times and intentionally counts both admission an
 
 ## Index design and explain plans
 
-The second migration adds `idx_admissions_patient_date_id` on `(patient_id, admitted_on, id)` plus patient/date indexes for diagnoses and treatments. A patient timeline filters on the leading `patient_id` key and orders by the subsequent date and ID keys. The Query Lab shows the actual planner choice, which currently includes `SEARCH admissions USING INDEX idx_admissions_patient_date_id (patient_id=?)` for the synthetic fixture. Since the query selects `ward_id`, the index is **not covering**; table-row access can still be required.
+The second migration adds `idx_admissions_patient_date_id` on `(patient_id, admitted_on, id)` plus patient/date indexes for diagnoses and treatments. The clinical timeline performs independent patient-indexed reads, then uses `UNION ALL` to retain every event before sorting newest first. The treatment-to-physician relationship is optional, so the timeline uses a `LEFT JOIN` and labels missing clinicians explicitly. The Query Lab shows the actual planner choice, which currently includes `SEARCH admissions USING INDEX idx_admissions_patient_date_id (patient_id=?)` for the synthetic fixture. Since the query selects `ward_id`, the index is **not covering**; table-row access can still be required.
 
 The windowed aggregate queries have broader work to do, including scans, joins, temporary sorting, and materialized intermediary results depending on SQLite's planner choices. Adding indexes to every column would increase storage and write costs and is not automatically an improvement. A proper performance experiment would increase synthetic data size, check distributions with `ANALYZE`, compare query plans, run repeatable warm/cold timing tests, and inspect writes and memory under a stated workload. The small deterministic seed is useful for correctness and explainability, but no production speed-up is claimed.
 

@@ -43,3 +43,41 @@ test('the timeline handles empty clinical history and empty report windows', () 
     db.close();
   }
 });
+
+test('clinical timeline retains optional clinicians, same-day events, and patient isolation', () => {
+  const db = openDatabase({ file: ':memory:', seed: false });
+  try {
+    db.exec(`
+      INSERT INTO patients (id, first_name, last_name, date_of_birth, sex, contact_no)
+      VALUES (1, 'First', 'Patient', '1999-01-01', 'F', '0'),
+             (2, 'Second', 'Patient', '1999-01-01', 'M', '0');
+      INSERT INTO wards (id, name, floor, category, capacity)
+      VALUES (1, 'Ward', '1', 'General', 10);
+      INSERT INTO physicians (id, first_name, last_name, specialty, contact_no)
+      VALUES (1, 'Alex', 'Smith', 'General', '0');
+      INSERT INTO illnesses (id, name, category)
+      VALUES (1, 'Condition', 'General');
+      INSERT INTO admissions (id, patient_id, ward_id, admitted_on, reason)
+      VALUES (1, 1, 1, '2026-09-10', 'Observation');
+      INSERT INTO diagnoses (id, patient_id, physician_id, illness_id, diagnosed_on)
+      VALUES (1, 1, 1, 1, '2026-09-10'), (2, 1, 1, 1, '2026-09-10');
+      INSERT INTO treatments (id, patient_id, performed_on, procedure_name)
+      VALUES (1, 1, '2026-09-10', 'Care'), (2, 2, '2026-09-11', 'Other');
+    `);
+    const previous = db.prepare('SELECT total_changes() AS count').get().count;
+    const timeline = queryLab(db, { from: '2026-09-01', to: '2026-09-30' }).examples[0];
+    assert.deepEqual(timeline.preview.rows.map((row) => ({ ...row })), [
+      { event_date: '2026-09-10', event_type: 'Admission', event_id: 1,
+        description: 'Ward · Observation' },
+      { event_date: '2026-09-10', event_type: 'Diagnosis', event_id: 2,
+        description: 'Condition · Dr. Smith' },
+      { event_date: '2026-09-10', event_type: 'Diagnosis', event_id: 1,
+        description: 'Condition · Dr. Smith' },
+      { event_date: '2026-09-10', event_type: 'Treatment', event_id: 1,
+        description: 'Care / Unassigned clinician' },
+    ]);
+    assert.equal(db.prepare('SELECT total_changes() AS count').get().count, previous);
+  } finally {
+    db.close();
+  }
+});

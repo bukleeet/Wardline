@@ -27,9 +27,9 @@ UNION ALL
 SELECT t.performed_on AS event_date,
        'Treatment' AS event_type,
        t.id AS event_id,
-       t.procedure_name || ' · Dr. ' || p.last_name AS description
+       t.procedure_name || ' / ' || COALESCE('Dr. ' || p.last_name, 'Unassigned clinician') AS description
 FROM treatments AS t
-JOIN physicians AS p ON p.id = t.physician_id
+LEFT JOIN physicians AS p ON p.id = t.physician_id
 WHERE t.patient_id = :patient_id
 ORDER BY event_date DESC, event_type, event_id DESC`,
     parameters: () => ({ patient_id: 1 }),
