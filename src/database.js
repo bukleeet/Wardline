@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { legacyColumns, migrations as releasedMigrations } from './migrations.js';
 import { seedDatabase } from './seed.js';
@@ -76,9 +76,15 @@ export function migrateDatabase(db, { seed = false, migrationPlan = releasedMigr
   return { isNew, version: latest };
 }
 
-export function openDatabase({ file = process.env.HOSPITAL_DB_PATH || 'data/hospital.sqlite', seed = true } = {}) {
-  if (file !== ':memory:') mkdirSync(dirname(resolve(file)), { recursive: true });
-  const db = new DatabaseSync(file);
+export function openDatabase({ file, seed = true } = {}) {
+  const configuredFile = file ?? process.env.HOSPITAL_DB_PATH;
+  const databaseFile = configuredFile || (
+    !existsSync('data/wardline.sqlite') && existsSync('data/hospital.sqlite')
+      ? 'data/hospital.sqlite'
+      : 'data/wardline.sqlite'
+  );
+  if (databaseFile !== ':memory:') mkdirSync(dirname(resolve(databaseFile)), { recursive: true });
+  const db = new DatabaseSync(databaseFile);
   try {
     migrateDatabase(db, { seed });
     return db;
