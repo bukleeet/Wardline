@@ -22,6 +22,12 @@ The Query Lab accepts only a date window. **It does not accept submitted SQL**, 
 | Record edits should not leave cross-record contradictions | Use schema constraints, whitelisted resources/fields, prepared statements, and transactions with business-rule validation | `test/repository.test.js` covers conflicting admissions, capacity changes, relations, and chronology |
 | Treatments may have no assigned physician | Unite admissions, diagnoses, and treatments with `UNION ALL`; use a `LEFT JOIN` for the optional treatment physician so valid events are never silently dropped | `test/clinical-timeline.test.js` checks unassigned treatments, patient isolation, and read-only previews |
 
+### Independent report oracle
+
+The hand-built SQL test cases above exercise specific edge conditions. `test/report-invariants.test.js` adds 45 deterministic scenarios across 15 generated admission histories and three report windows, including February 29, 2024. An independent JavaScript implementation expands each stay into occupied calendar days, computes daily admissions and discharges, finds ward occupancy peaks and capacity thresholds, then walks each patient's consecutive stays to count observed returns within 30 days. Those totals are checked against the SQL report's recursive CTE, window function, interval aggregation, and `LEAD()` outputs. Unlike comparing two SQL queries that could share an incorrect assumption, this reference calculation follows a separate algorithm. Seed and date-range labels make failures reproducible.
+
+Run only this contract with `node --test test/report-invariants.test.js` or include it in `npm run check`. These synthetic scenarios strengthen correctness evidence, but they do not substitute for production workload benchmarks or clinical validation.
+
 ### A join fanout example
 
 If physician A has two diagnosis rows and two treatment rows, directly joining both child tables by physician creates **four** joined rows. `COUNT(diagnosis.id)` and `COUNT(treatment.id)` would each incorrectly report four. The implemented report produces one aggregate row per physician per child relation before joining them. It deliberately keeps `COUNT(DISTINCT patient_id)` within the treatment aggregate to count distinct treated patients. Both subqueries use the same bound report window.
